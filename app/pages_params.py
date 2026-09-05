@@ -302,7 +302,8 @@ class ParamsPageMixin:
         apis = self.store.load_settings()
         api_url = apis.get("api_url", "")
         if api_url:
-            api_row = QLabel(f"✅ API 已连接：{api_url}")
+            model = apis.get("api_model") or wages.DEFAULT_API_MODEL
+            api_row = QLabel(f"✅ API 已连接：{api_url} · 模型 {model}")
             api_row.setObjectName("secHint")
         else:
             api_row = QLabel("⚠️ 未配置最低工资 API，选地区后需手动输入")
@@ -544,34 +545,109 @@ class ParamsPageMixin:
         self._set_status(f"已按 {province} · {region} 填入本地官方最低工资标准", True)
 
     def _open_api_settings(self):
-        """弹出 API 设置对话框（URL + Key）。"""
+        """弹出 API 设置对话框：服务商模板 + API 地址 + 模型名 + Key + 测试连接。"""
         from PySide6.QtWidgets import QDialog, QFormLayout, QDialogButtonBox
         settings = self.store.load_settings()
         dlg = QDialog(self)
-        dlg.setWindowTitle("最低工资 API 设置")
-        dlg.setMinimumWidth(380)
+        dlg.setWindowTitle("最低工资 / 节假日 API 设置")
+        dlg.setMinimumWidth(480)
         form = QFormLayout(dlg)
+
+        # OpenAI 兼容服务商模板（不含本地服务；「手动输入」可接任意 https 兼容端点）
+        providers = [
+            # (显示名, api_base, 默认 model)
+            ("Agnes（默认）", "https://apihub.agnes-ai.com/v1", "agnes-2.5-flash"),
+            ("DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"),
+            ("通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-max"),
+            ("Kimi (Moonshot)", "https://api.moonshot.cn/v1", "moonshot-v1-8k"),
+            ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-4-plus"),
+            ("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
+            ("硅基流动", "https://api.siliconflow.cn/v1", "Qwen2.5-7B-Instruct"),
+            ("火山方舟 (豆包)", "https://ark.cn-beijing.volces.com/api/v3", "doubao-seed-1-32k"),
+            ("腾讯混元", "https://api.hunyuan.cloud.tencent.com/v1", "hunyuan-turbos-latest"),
+            ("零一万物", "https://api.lingyiwanwu.com/v1", "yi-lightning"),
+        ]
+        current_url = (settings.get("api_url") or "").rstrip("/")
+        current_model = settings.get("api_model") or wages.DEFAULT_API_MODEL
+
+        prov_combo = QComboBox()
+        prov_combo.addItem("手动输入", "")
+        for name, base, _m in providers:
+            prov_combo.addItem(f"{name} · {base}", base)
+        # 若已存地址命中某服务商，自动选中它（便于修改 Key/模型）
+        matched = next((i for i, (_n, base, _m) in enumerate(providers)
+                        if current_url == base.rstrip("/")), -1)
+        if matched >= 0:
+            prov_combo.setCurrentIndex(matched + 1)
+        form.addRow("服务商", prov_combo)
+
         url_edit = QLineEdit(settings.get("api_url", ""))
-        url_edit.setPlaceholderText("https://your-api.example.com")
+        url_edit.setPlaceholderText("https://api.deepseek.com/v1")
+        model_edit = QLineEdit(current_model)
+        model_edit.setPlaceholderText("如 deepseek-chat / qwen-max / glm-4-plus")
         key_edit = QLineEdit(settings.get("api_key", ""))
-        key_edit.setPlaceholderText("可选")
+        key_edit.setPlaceholderText("可选（云端服务需填 Key）")
         key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         form.addRow("API 地址", url_edit)
+        form.addRow("模型名", model_edit)
         form.addRow("API Key", key_edit)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+
+        def _on_provider_changed(idx: int):
+            base = prov_combo.itemData(idx)
+            if not base:
+                return  # 手动输入：不覆盖已有填写
+            url_edit.setText(base)
+            for _n, _b, m in providers:
+                if _b == base:
+                    model_edit.setText(m)
+                    break
+
+        prov_combo.currentIndexChanged.connect(_on_provider_changed)
+
+        def _run_test():
+            url_text = url_edit.text().strip()
+            if not url_text:
+                QMessageBox.warning(dlg, "测试连接", "请先填写 API 地址")
+                return
+            ok, msg = wages.test_connection(
+                url_text, key_edit.text().strip(),
+                api_model=model_edit.text().strip() or None)
+            if ok:
+                QMessageBox.information(dlg, "测试连接", msg)
+            else:
+                QMessageBox.warning(dlg, "测试连接失败", msg)
+
+        test_btn = QPushButton("测试连接")
+        test_btn.setCursor(Qt.PointingHandCursor)
+        test_btn.setToolTip("用当前填写的地址/Key/模型发一条消息验证能否连通")
+        test_btn.clicked.connect(_run_test)
+        form.addRow("", test_btn)
+
+        hint = QLabel("保存后可在「🔄 获取最低工资」与节假日「API 一键铺」中使用该服务；失败会自动回退本地数据。")
+        hint.setObjectName("secHint")
+        hint.setWordWrap(True)
+        form.addRow("", hint)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         form.addRow(btns)
         btns.accepted.connect(dlg.accept)
         btns.rejected.connect(dlg.reject)
+
         if dlg.exec() == QDialog.DialogCode.Accepted:
             url_text = url_edit.text().strip()
             # 强制 HTTPS：禁止 http://，避免 Bearer Token 在网络中明文传输
             if url_text and not url_text.lower().startswith("https://"):
-                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "不安全的 API 地址",
                                     "为保护 API Key 传输安全，API 地址必须以 https:// 开头。\n"
                                     "请改用 HTTPS 地址后重试。")
                 return
             settings["api_url"] = url_text
+            model_text = model_edit.text().strip()
+            if model_text:
+                settings["api_model"] = model_text
+            else:
+                settings.pop("api_model", None)
             key_text = key_edit.text().strip()
             if key_text:
                 settings["api_key"] = key_text
@@ -588,7 +664,8 @@ class ParamsPageMixin:
         settings = self.store.load_settings()
         api_url = settings.get("api_url", "")
         if api_url:
-            self._api_hint_label.setText(f"✅ API 已连接：{api_url}")
+            model = settings.get("api_model") or wages.DEFAULT_API_MODEL
+            self._api_hint_label.setText(f"✅ API 已连接：{api_url} · 模型 {model}")
         else:
             self._api_hint_label.setText("⚠️ 未配置最低工资 API，选地区后需手动输入")
 
@@ -644,8 +721,10 @@ class ParamsPageMixin:
         settings = self.store.load_settings()
         api_url = settings.get("api_url", "")
         api_key = settings.get("api_key", "")
+        api_model = settings.get("api_model") or None
         # fetch 内部先试 API，失败自动 fallback 本地静态表
-        data = wages.fetch(api_url, api_key, self._book.year, self._book.month, province, region)
+        data = wages.fetch(api_url, api_key, self._book.year, self._book.month,
+                           province, region, api_model=api_model)
         if data is None:
             self._set_status(f"已选择 {province} · {region}，但未获最低工资数据，需手动输入", False)
             return

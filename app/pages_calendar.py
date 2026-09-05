@@ -430,7 +430,8 @@ class CalendarPageMixin:
         settings = self.store.load_settings()
         api_url = settings.get("api_url", "")
         api_key = settings.get("api_key", "")
-        data = wages.fetch_holidays(api_url, api_key, y)
+        api_model = settings.get("api_model") or None
+        data = wages.fetch_holidays(api_url, api_key, y, api_model=api_model)
         if data is None:
             self._set_status(f"{y} 年节假日数据未找到（API 和本地表都没有），无法铺设", False)
             return

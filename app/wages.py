@@ -515,10 +515,21 @@ def get(province: str, region: str | None = None) -> tuple[float, float] | None:
 # —— Chat API 接入：用 LLM 查询最低工资 ——
 # 策略：先试 API（已配置的情况），失败或未配置 → 自动 fallback 到本地静态表。
 # 省/市数据在上方 _XX_DATA / _XX_GRADEn 分块中定义，可随时编辑修改数值。
+# api_model：OpenAI 兼容服务的模型名（DeepSeek / 通义 / Kimi / 智谱 等，
+#   在「API 设置」里按服务商选择/填写），未配置时用 DEFAULT_API_MODEL。
+
+# 未在「API 设置」中指定模型名时的默认模型（兼容旧配置）
+DEFAULT_API_MODEL = "agnes-2.5-flash"
+
+
+def _chat_model(api_model: str | None) -> str:
+    """返回实际请求用的模型名：配置值优先，空则用默认。"""
+    return (api_model or "").strip() or DEFAULT_API_MODEL
 
 
 def fetch(api_url: str | None, api_key: str | None,
-          year: int, month: int, province: str, region: str) -> dict | None:
+          year: int, month: int, province: str, region: str,
+          api_model: str | None = None) -> dict | None:
     """查询指定年月的最低工资。优先级：
     1. 已配置 API → 先试 Chat API（prompt 带 year/month）
     2. 未配置 API 或 API 失败 → fallback 本地静态表
@@ -527,7 +538,8 @@ def fetch(api_url: str | None, api_key: str | None,
     # 1. 先试 API
     api_result = None
     if api_url and api_key:
-        api_result = _try_chat_api(api_url, api_key, year, month, province, region)
+        api_result = _try_chat_api(api_url, api_key, year, month, province, region,
+                                   api_model=api_model)
     if api_result is not None:
         return api_result
     # 2. fallback 本地静态表
@@ -538,7 +550,8 @@ def fetch(api_url: str | None, api_key: str | None,
 
 
 def _try_chat_api(api_url: str, api_key: str,
-                  year: int, month: int, province: str, region: str) -> dict | None:
+                  year: int, month: int, province: str, region: str,
+                  api_model: str | None = None) -> dict | None:
     """单次 Chat API 调用。prompt 包含用户选择的年份/月份。失败返回 None。"""
     try:
         import ssl
@@ -555,7 +568,7 @@ def _try_chat_api(api_url: str, api_key: str,
             f"直接返回 JSON，不要任何解释、不要 markdown、不要代码块。"
         )
         payload = {
-            "model": "agnes-2.5-flash",
+            "model": _chat_model(api_model),
             "temperature": 0,
             "messages": [{"role": "user", "content": prompt}],
         }
@@ -595,13 +608,13 @@ def _try_chat_api(api_url: str, api_key: str,
 
 
 def fetch_holidays(api_url: str | None, api_key: str | None,
-                   year: int) -> dict | None:
+                   year: int, api_model: str | None = None) -> dict | None:
     """查询某年的法定节假日/放假调休/补班日。
     优先级：已配置 API 先试 → 失败 fallback 到本地 holidays.py。
     """
     # 1. 先试 API
     if api_url and api_key:
-        r = _try_holiday_api(api_url, api_key, year)
+        r = _try_holiday_api(api_url, api_key, year, api_model=api_model)
         if r is not None:
             return r
     # 2. fallback 本地静态表
@@ -622,7 +635,8 @@ def _holidays_from_local(year: int) -> dict | None:
     }
 
 
-def _try_holiday_api(api_url: str, api_key: str, year: int) -> dict | None:
+def _try_holiday_api(api_url: str, api_key: str, year: int,
+                     api_model: str | None = None) -> dict | None:
     """调用 Chat API 查询某年中国法定节假日安排；失败返回 None。"""
     try:
         import ssl
@@ -641,7 +655,7 @@ def _try_holiday_api(api_url: str, api_key: str, year: int) -> dict | None:
             "严格基于官方发布的安排，不要臆造。直接返回 JSON，不要任何解释、不要 markdown、不要代码块。"
         )
         payload = {
-            "model": "agnes-2.5-flash",
+            "model": _chat_model(api_model),
             "temperature": 0,
             "messages": [{"role": "user", "content": prompt}],
         }
@@ -693,3 +707,71 @@ def _try_holiday_api(api_url: str, api_key: str, year: int) -> dict | None:
         return result
     except Exception:
         return None
+
+
+def test_connection(api_url: str | None, api_key: str | None,
+                    api_model: str | None = None) -> tuple[bool, str]:
+    """向配置的 OpenAI 兼容服务发一条最小消息，验证能否连通。
+
+    返回 (True, "连接成功（xxx ms · 模型 xxx）") 或 (False, 具体原因)。
+    供「API 设置」里的「测试连接」使用：能直接看出 Key 无效 / 模型名不对 /
+    接口地址错 / 超时等问题。仅支持 https（当前版本不接本地 http 服务）。
+    """
+    import json as _json
+    import socket
+    import ssl
+    import time
+    import urllib.error
+    import urllib.request
+
+    endpoint = (api_url or "").rstrip("/") + "/chat/completions"
+    if not endpoint.lower().startswith("https://"):
+        return False, "API 地址必须以 https:// 开头（当前版本不支持 http 本地服务）"
+    model = _chat_model(api_model)
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "请只回复：ok"}],
+        "max_tokens": 8,
+        "temperature": 0,
+    }
+    data = _json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+    ctx = ssl.create_default_context()
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+            ms = int((time.monotonic() - start) * 1000)
+            try:
+                body = _json.loads(resp.read().decode("utf-8"))
+            except Exception:
+                return False, "返回内容不是有效 JSON，可能不是 OpenAI 兼容的 /chat/completions 端点"
+            choices = body.get("choices") or []
+            if not choices:
+                return False, "返回 200 但无 choices 字段，可能不是兼容的 chat 接口"
+            return True, f"连接成功（{ms} ms · 模型 {model}）"
+    except urllib.error.HTTPError as e:
+        code = e.code
+        if code == 401:
+            return False, "API Key 无效（401）"
+        if code == 403:
+            return False, "API Key 无权访问该模型（403）"
+        if code == 404:
+            return False, "接口地址或模型名不正确（404），请检查 API 地址与模型名"
+        if code == 429:
+            return False, "调用频率超限（429）"
+        if code >= 500:
+            return False, f"服务器错误：{code}"
+        return False, f"HTTP 错误：{code}"
+    except urllib.error.URLError as e:
+        reason = getattr(e, "reason", e)
+        msg = str(reason)
+        if isinstance(reason, socket.timeout) or "timed out" in msg.lower():
+            return False, "连接超时，请检查网络或 API 地址"
+        if isinstance(reason, ssl.SSLError) or "ssl" in msg.lower() or "certificate" in msg.lower():
+            return False, f"TLS/证书校验失败：{reason}"
+        return False, f"网络请求失败：{reason}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"网络请求失败：{e}"
