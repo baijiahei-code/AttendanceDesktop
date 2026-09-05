@@ -1,0 +1,59 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+ENV/
+env/
+
+# ===== PyInstaller / 构建产物 =====
+build/
+dist/
+*.spec.bak
+# 注：AttendanceDesktop.spec 是受版本控制的构建描述，不忽略 *.spec 本体
+
+# ===== 构建产物目录（本地产物，不入库） =====
+release/
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 日志 / 临时文件 =====
+*.log
+*.tmp
+*.bak
+*.pid
+
+# ===== 测试 / 调试产物 =====
+_check_*.png
+_report_sample.xlsx
+_bat_run.log
+
+# ===== 用户数据 =====
+# 应用按月存档（保存在 %LOCALAPPDATA%\工作考勤表\data，不在仓库内）
+# 但万一有人在仓库根目录放了本地数据，也忽略
+data/
+*.json.local
+
+# ===== 密钥 / 凭证 =====
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+secrets/
