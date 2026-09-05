@@ -306,7 +306,7 @@ class ParamsPageMixin:
             api_row = QLabel(f"✅ API 已连接：{api_url} · 模型 {model}")
             api_row.setObjectName("secHint")
         else:
-            api_row = QLabel("⚠️ 未配置最低工资 API，选地区后需手动输入")
+            api_row = QLabel("ℹ️ 未配置最低工资 API：选择地区后会自动填入内置的本地官方最低工资表，无需手动输入（可选配 API 联网获取最新标准）")
             api_row.setObjectName("secHint")
         api_row.setWordWrap(True)
         card.add_widget(api_row)
@@ -667,7 +667,7 @@ class ParamsPageMixin:
             model = settings.get("api_model") or wages.DEFAULT_API_MODEL
             self._api_hint_label.setText(f"✅ API 已连接：{api_url} · 模型 {model}")
         else:
-            self._api_hint_label.setText("⚠️ 未配置最低工资 API，选地区后需手动输入")
+            self._api_hint_label.setText("ℹ️ 未配置最低工资 API：选择地区后会自动填入内置的本地官方最低工资表，无需手动输入（可选配 API 联网获取最新标准）")
 
     def _on_province_changed(self, text: str):
         """省份下拉切换 → 重建地区列表 → 保存 settings → 自动用本地表填最低工资。"""
