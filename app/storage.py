@@ -104,6 +104,11 @@ class MonthStore:
     def __init__(self, directory: str | None = None):
         self.dir = directory or default_data_dir()
         self.last_error: str | None = None
+        # 设置缓存：settings.json 虽小，但每次读取都要走磁盘 IO + DPAPI 解密，
+        # 而界面切省市 / 刷新提示时会频繁读。用 (mtime, size) 做失效判断，
+        # 文件未变则直接复用上次解析结果。
+        self._settings_cache: dict | None = None
+        self._settings_stamp: tuple[float, int] | None = None
         os.makedirs(self.dir, exist_ok=True)
 
     def _file(self, year: int, month: int) -> str:
@@ -174,18 +179,30 @@ class MonthStore:
         return os.path.join(self.dir, "settings.json")
 
     def load_settings(self) -> dict:
+        """读取应用设置（带缓存；返回副本，调用方可自由修改后自行保存）。"""
+        path = self._settings_path()
         try:
-            with open(self._settings_path(), "r", encoding="utf-8") as f:
+            st = os.stat(path)
+            stamp = (st.st_mtime, st.st_size)
+        except OSError:
+            # 尚未创建设置文件（首次运行）
+            self._settings_cache, self._settings_stamp = {}, None
+            return {}
+        if self._settings_cache is not None and stamp == self._settings_stamp:
+            return dict(self._settings_cache)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-        except FileNotFoundError:
-            return {}
         except Exception:
-            return {}
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
         # 透明解密敏感字段
         for k in _SENSITIVE_KEYS:
             if k in data:
                 data[k] = _dpapi_unprotect(data[k])
-        return data
+        self._settings_cache, self._settings_stamp = data, stamp
+        return dict(data)
 
     def save_settings(self, data: dict) -> bool:
         try:
@@ -195,8 +212,16 @@ class MonthStore:
             for k in _SENSITIVE_KEYS:
                 if k in safe and safe[k]:
                     safe[k] = _dpapi_protect(safe[k])
-            with open(self._settings_path(), "w", encoding="utf-8") as f:
+            path = self._settings_path()
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(safe, f, ensure_ascii=False, indent=2)
+            # 同步缓存：避免紧接着的读取再次解密，也让连续保存的中间态一致
+            self._settings_cache = dict(data)
+            try:
+                st = os.stat(path)
+                self._settings_stamp = (st.st_mtime, st.st_size)
+            except OSError:
+                self._settings_stamp = None
             return True
         except Exception:
             traceback.print_exc()

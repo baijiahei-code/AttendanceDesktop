@@ -11,8 +11,10 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
 )
 
-from . import calc, wages
-from .ui import NumberSpin
+from . import calc, wages, worker
+from .ui import (LOCKED_INPUT_QSS, NumberSpin, make_lock_banner, make_lock_button,
+                 set_busy_button, set_field_locked, set_fields_locked,
+                 set_lock_button_state, show_lock_banner)
 from .widgets import Card
 
 
@@ -33,12 +35,7 @@ class ParamsPageMixin:
         self._params_extra_modify_widgets: list = []
 
         # —— 🔒 只读模式提示横幅（锁定时才显示）——
-        self._lock_banner = QLabel("🔒  当前月份已锁定 · 仅供查看，所有修改操作已屏蔽")
-        self._lock_banner.setStyleSheet(
-            "background:#FEF4E6;color:#B54708;border:1px solid #FEDF89;"
-            "border-radius:8px;padding:8px 14px;font-weight:600;font-size:13px;")
-        self._lock_banner.setWordWrap(True)
-        self._lock_banner.hide()
+        self._lock_banner = make_lock_banner()
         lay.addWidget(self._lock_banner)
 
         # —— 参数模板条 ——
@@ -126,16 +123,9 @@ class ParamsPageMixin:
                 pass
         # 3) 所有 spin 视觉反馈（背景变灰 + 文本变深灰；锁定月必须 override）
         for sp in (getattr(self, "_param_spins", {}) or {}).values():
-            try:
-                if locked:
-                    sp.setStyleSheet("background:#F5F7FA;color:#667085;")
-                else:
-                    sp.setStyleSheet("")
-            except Exception:
-                pass
+            set_field_locked(sp, locked)
         # 4) 锁定横幅
-        if hasattr(self, "_lock_banner") and self._lock_banner is not None:
-            self._lock_banner.setVisible(bool(locked))
+        show_lock_banner(getattr(self, "_lock_banner", None), locked)
         # 5) 月份解锁（非整月只读）后：重放字段级锁定，避免最低工资相关字段被一并解锁
         if not locked:
             self._apply_param_field_locks()
@@ -153,24 +143,54 @@ class ParamsPageMixin:
         spins = getattr(self, "_param_spins", {}) or {}
         # 1) 最低工资两行
         wage_locked = bool(getattr(self, "_wage_locked", True))
-        for attr in ("min_wage", "parttime_min"):
-            sp = spins.get(attr)
-            if sp is None:
-                continue
-            sp.setEnabled(not wage_locked)
-            sp.setStyleSheet("background:#F5F7FA;color:#667085;" if wage_locked else "")
+        set_fields_locked([spins.get(a) for a in ("min_wage", "parttime_min")],
+                          wage_locked)
         # 2) 加班费计算基数
         ot_locked = bool(getattr(self, "_ot_base_locked", True))
-        sp = spins.get("overtime_base")
-        if sp is not None:
-            sp.setEnabled(not ot_locked)
-            sp.setStyleSheet("background:#F5F7FA;color:#667085;" if ot_locked else "")
+        set_field_locked(spins.get("overtime_base"), ot_locked)
         # 3) 公积金缴费基数
         fund_locked = bool(getattr(self, "_fund_base_locked", True))
-        sp = spins.get("fund_base")
-        if sp is not None:
-            sp.setEnabled(not fund_locked)
-            sp.setStyleSheet("background:#F5F7FA;color:#667085;" if fund_locked else "")
+        set_field_locked(spins.get("fund_base"), fund_locked)
+
+    def _add_spin_field(self, card, attr: str, label: str, decimals: int = 2,
+                        step: float = 1.0, suffix: str = "", tip: str = "",
+                        row_extra=None, row_spacing: int | None = None,
+                        locked: bool = False):
+        """往卡片里加一行「标签 + 数字输入」（可选同行按钮 / 下方小字提示）。
+
+        统一完成：建控件 → 绑 _on_numeric → 登记 _param_spins（锁定与取值靠它）。
+        返回 NumberSpin，调用方可在其上追加联动（如最低工资 → 加班费基数）。
+        """
+        box = QVBoxLayout()
+        box.setSpacing(3)
+        lab_l = QLabel(label)
+        lab_l.setObjectName("fldLabel")
+        spin = NumberSpin(decimals=decimals, step=step)
+        spin.setValue(float(getattr(self._book, attr) or 0.0))
+        if suffix:
+            spin.setSuffix(f" {suffix}")
+        spin.setEnabled(not locked)
+        if locked:
+            spin.setStyleSheet(LOCKED_INPUT_QSS)
+        spin.valueChanged.connect(lambda _, a=attr: self._on_numeric(a))
+        self._param_spins[attr] = spin
+        box.addWidget(lab_l)
+        if row_extra is None:
+            box.addWidget(spin)
+        else:
+            row = QHBoxLayout()
+            if row_spacing is not None:
+                row.setSpacing(row_spacing)
+            row.addWidget(spin, 1)
+            row.addWidget(row_extra)
+            box.addLayout(row)
+        if tip:
+            t = QLabel(tip)
+            t.setObjectName("secHint")
+            t.setWordWrap(True)
+            box.addWidget(t)
+        card.add_layout(box)
+        return spin
 
     def _make_social_card(self):
         """社保 / 公积金卡。
@@ -181,42 +201,21 @@ class ParamsPageMixin:
         b = self._book
 
         # —— 普通字段：社保缴费基数 + 4 个比例 ——
-        plain_fields = [
-            ("社保缴费基数", "social_base", 2, 100, "元"),
+        for lab, attr, dec, step, suf, tip in [
+            ("社保缴费基数", "social_base", 2, 100, "元", ""),
             ("个人社保比例", "personal_social_rate", 3, 0.001, "", "小数，0.105 = 10.5%"),
             ("公司社保比例", "company_social_rate", 3, 0.001, "", "小数，0.24 = 24%"),
             ("个人公积金比例", "personal_fund_rate", 3, 0.001, "", "小数，0.07 = 7%"),
             ("公司公积金比例", "company_fund_rate", 3, 0.001, "", "小数，0.07 = 7%"),
-        ]
-        for field in plain_fields:
-            lab, attr, dec, step, suf = field[:5]
-            tip = field[5] if len(field) > 5 else ""
-            box = QVBoxLayout()
-            box.setSpacing(3)
-            lab_l = QLabel(lab)
-            lab_l.setObjectName("fldLabel")
-            spin = NumberSpin(decimals=dec, step=step)
-            spin.setValue(float(getattr(b, attr) or 0.0))
-            if suf:
-                spin.setSuffix(f" {suf}")
-            spin.valueChanged.connect(lambda _, a=attr: self._on_numeric(a))
-            self._param_spins[attr] = spin
-            box.addWidget(lab_l)
-            box.addWidget(spin)
-            if tip:
-                t = QLabel(tip)
-                t.setObjectName("secHint")
-                box.addWidget(t)
-            card.add_layout(box)
+        ]:
+            self._add_spin_field(card, attr, lab, decimals=dec, step=step,
+                                 suffix=suf, tip=tip)
 
         # —— 公积金缴费基数：带锁，默认锁定跟随 min_wage ——
         self._fund_base_locked = True
-        self._fund_base_lock_btn = QPushButton("🔒 已锁定 · 冻结当前值")
-        self._fund_base_lock_btn.setCursor(Qt.PointingHandCursor)
-        self._fund_base_lock_btn.setObjectName("ghost")
-        self._fund_base_lock_btn.setToolTip(
-            "锁定时自动等于月最低工资；点击解锁可手动改为不同值")
-        self._fund_base_lock_btn.clicked.connect(self._toggle_fund_base_lock)
+        self._fund_base_lock_btn = make_lock_button(
+            "锁定时自动等于月最低工资；点击解锁可手动改为不同值",
+            self._toggle_fund_base_lock)
 
         box = QVBoxLayout()
         box.setSpacing(3)
@@ -232,9 +231,7 @@ class ParamsPageMixin:
                 setattr(b, "fund_base", mw)
         fund_spin.setValue(fund_init)
         fund_spin.setSuffix(" 元")
-        fund_spin.setEnabled(not self._fund_base_locked)
-        if self._fund_base_locked:
-            fund_spin.setStyleSheet("background:#F5F7FA;color:#667085;")
+        set_field_locked(fund_spin, self._fund_base_locked)
         fund_spin.valueChanged.connect(lambda _, a="fund_base": self._on_numeric(a))
         self._param_spins["fund_base"] = fund_spin
         self._fund_base_spin = fund_spin
@@ -254,33 +251,17 @@ class ParamsPageMixin:
         """计薪与请假卡：约定工作天数 + 一键填入「提供正常劳动天数」。"""
         card = Card("计薪与请假",
                     hint="月计薪天数按国家规定固定 21.75 天；缺勤扣款基准：约定工作天数 − 提供正常劳动天数")
-        b = self._book
-
-        box = QVBoxLayout()
-        box.setSpacing(3)
-        lab_l = QLabel("约定工作天数")
-        lab_l.setObjectName("fldLabel")
-
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        spin = NumberSpin(decimals=2, step=0.5)
-        spin.setValue(float(getattr(b, "agreed_work_days") or 0.0))
-        spin.setSuffix(" 天")
-        spin.valueChanged.connect(lambda _, a="agreed_work_days": self._on_numeric(a))
-        self._param_spins["agreed_work_days"] = spin
 
         fill_btn = QPushButton("一键填入提供正常劳动天数")
         fill_btn.setToolTip("按当前考勤统计，自动把「提供正常劳动天数」填入约定工作天数")
         fill_btn.setCursor(Qt.PointingHandCursor)
         fill_btn.setObjectName("ghost")
         fill_btn.clicked.connect(self._on_fill_agreed_work_days)
-
-        row.addWidget(spin, 1)
-        row.addWidget(fill_btn)
-        box.addWidget(lab_l)
-        box.addLayout(row)
-        card.add_layout(box)
         self._fill_agreed_btn = fill_btn  # 锁定时禁用
+
+        self._add_spin_field(card, "agreed_work_days", "约定工作天数",
+                             decimals=2, step=0.5, suffix="天",
+                             row_extra=fill_btn, row_spacing=8)
         return card
 
     def _make_note_card(self, b):
@@ -381,50 +362,30 @@ class ParamsPageMixin:
 
         # —— 最低工资两行（默认锁定；API 成功填充前值为 model 默认 2170/22.0）——
         self._wage_locked = True
-        self._wage_lock_btn = QPushButton("🔒 已锁定 · 冻结当前值")
-        self._wage_lock_btn.setCursor(Qt.PointingHandCursor)
-        self._wage_lock_btn.setObjectName("ghost")
-        self._wage_lock_btn.setToolTip("锁定时保持 API 自动填充值；点击解锁可手动修改")
-        self._wage_lock_btn.clicked.connect(self._toggle_wage_lock)
+        self._wage_lock_btn = make_lock_button(
+            "锁定时保持 API 自动填充值；点击解锁可手动修改", self._toggle_wage_lock)
 
         self._min_wage_spin = None
-        for attr, label, dec, step, suf in [
-            ("min_wage", "月最低工资", 2, 1, "元"),
-            ("parttime_min", "非全日制小时最低工资", 2, 1, "元/时"),
+        for attr, label, suf in [
+            ("min_wage", "月最低工资", "元"),
+            ("parttime_min", "非全日制小时最低工资", "元/时"),
         ]:
-            box = QVBoxLayout()
-            box.setSpacing(3)
-            lab_l = QLabel(label)
-            lab_l.setObjectName("fldLabel")
-            spin = NumberSpin(decimals=dec, step=step)
-            spin.setValue(float(getattr(self._book, attr) or 0.0))
-            spin.setSuffix(f" {suf}")
-            spin.setEnabled(not self._wage_locked)
-            if self._wage_locked:
-                spin.setStyleSheet("background:#F5F7FA;color:#667085;")
+            spin = self._add_spin_field(
+                card, attr, label, decimals=2, step=1, suffix=suf,
+                row_extra=self._wage_lock_btn if attr == "min_wage" else None,
+                locked=self._wage_locked)
             if attr == "min_wage":
-                spin.valueChanged.connect(lambda v, a=attr: (
-                    self._on_numeric(a), self._sync_ot_base_with_min_wage(v),
-                    self._sync_fund_base_with_min_wage(v)))
+                # 最低工资还须联动「加班费计算基数」与「公积金缴费基数」
+                spin.valueChanged.connect(
+                    lambda v: (self._sync_ot_base_with_min_wage(v),
+                               self._sync_fund_base_with_min_wage(v)))
                 self._min_wage_spin = spin
-            else:
-                spin.valueChanged.connect(lambda _, a=attr: self._on_numeric(a))
-            self._param_spins[attr] = spin
-            box.addWidget(lab_l)
-            row = QHBoxLayout()
-            row.addWidget(spin, 1)
-            if attr == "min_wage":
-                row.addWidget(self._wage_lock_btn)
-            box.addLayout(row)
-            card.add_layout(box)
 
         # —— 加班费计算基数（独立锁，默认锁定=最低工资）——
         self._ot_base_locked = True
-        self._ot_base_lock_btn = QPushButton("🔒 已锁定 · 冻结当前值")
-        self._ot_base_lock_btn.setCursor(Qt.PointingHandCursor)
-        self._ot_base_lock_btn.setObjectName("ghost")
-        self._ot_base_lock_btn.setToolTip("锁定时自动等于月最低工资；点击解锁可手动改为不同值")
-        self._ot_base_lock_btn.clicked.connect(self._toggle_ot_base_lock)
+        self._ot_base_lock_btn = make_lock_button(
+            "锁定时自动等于月最低工资；点击解锁可手动改为不同值",
+            self._toggle_ot_base_lock)
 
         box = QVBoxLayout()
         box.setSpacing(3)
@@ -440,9 +401,7 @@ class ParamsPageMixin:
                 setattr(self._book, "overtime_base", mw)
         ot_spin.setValue(ot_init)
         ot_spin.setSuffix(" 元")
-        ot_spin.setEnabled(not self._ot_base_locked)
-        if self._ot_base_locked:
-            ot_spin.setStyleSheet("background:#F5F7FA;color:#667085;")
+        set_field_locked(ot_spin, self._ot_base_locked)
         ot_spin.valueChanged.connect(lambda _, a="overtime_base": self._on_numeric(a))
         self._param_spins["overtime_base"] = ot_spin
         self._ot_base_spin = ot_spin
@@ -458,22 +417,8 @@ class ParamsPageMixin:
         card.add_layout(box)
 
         # —— 其余字段（始终可编辑）——
-        for lab, attr, dec, step, suf in [
-            ("每日工时", "hours_per_day", 2, 0.5, "小时"),
-        ]:
-            box = QVBoxLayout()
-            box.setSpacing(3)
-            lab_l = QLabel(lab)
-            lab_l.setObjectName("fldLabel")
-            spin = NumberSpin(decimals=dec, step=step)
-            spin.setValue(float(getattr(self._book, attr) or 0.0))
-            if suf:
-                spin.setSuffix(f" {suf}")
-            spin.valueChanged.connect(lambda _, a=attr: self._on_numeric(a))
-            self._param_spins[attr] = spin
-            box.addWidget(lab_l)
-            box.addWidget(spin)
-            card.add_layout(box)
+        self._add_spin_field(card, "hours_per_day", "每日工时",
+                             decimals=2, step=0.5, suffix="小时")
 
         # 初始化：如果已有 min_wage 且 overtime_base 仍锁定，同步一下
         if self._ot_base_locked and self._min_wage_spin is not None:
@@ -538,7 +483,7 @@ class ParamsPageMixin:
             spin.blockSignals(False)
             setattr(self._book, attr, v)
         if self._ot_base_locked:
-            self._sync_ot_base_with_min_wage(monthly, from_region=True)
+            self._sync_ot_base_with_min_wage(monthly)
         if getattr(self, "_fund_base_locked", False):
             self._sync_fund_base_with_min_wage(monthly)
         self._changed()
@@ -604,18 +549,42 @@ class ParamsPageMixin:
 
         prov_combo.currentIndexChanged.connect(_on_provider_changed)
 
+        def _show_test_result(ok: bool, msg: str):
+            # 对话框可能已被用户关闭：此时不能再弹窗（控件已销毁）
+            try:
+                if ok:
+                    QMessageBox.information(dlg, "测试连接", msg)
+                else:
+                    QMessageBox.warning(dlg, "测试连接失败", msg)
+            except RuntimeError:
+                pass
+
         def _run_test():
             url_text = url_edit.text().strip()
             if not url_text:
                 QMessageBox.warning(dlg, "测试连接", "请先填写 API 地址")
                 return
-            ok, msg = wages.test_connection(
-                url_text, key_edit.text().strip(),
-                api_model=model_edit.text().strip() or None)
-            if ok:
-                QMessageBox.information(dlg, "测试连接", msg)
-            else:
-                QMessageBox.warning(dlg, "测试连接失败", msg)
+            try:
+                test_btn.setEnabled(False)
+                test_btn.setText("⏳ 测试中…")
+            except RuntimeError:
+                return
+            # 网络请求放后台：否则 15 秒超时期间主窗口与对话框都会冻结
+            dlg._test_call = worker.run_async(
+                lambda: wages.test_connection(
+                    url_text, key_edit.text().strip(),
+                    api_model=model_edit.text().strip() or None),
+                on_done=lambda res: _show_test_result(*res),
+                on_failed=lambda msg: _show_test_result(False, f"网络请求失败：{msg}"),
+                on_finished=lambda: _restore_test_btn(),
+            )
+
+        def _restore_test_btn():
+            try:
+                test_btn.setEnabled(True)
+                test_btn.setText("测试连接")
+            except RuntimeError:
+                pass  # 对话框已关闭
 
         test_btn = QPushButton("测试连接")
         test_btn.setCursor(Qt.PointingHandCursor)
@@ -715,16 +684,46 @@ class ParamsPageMixin:
 
     def _apply_region(self, province: str, region: str):
         """选地区时触发：优先 API 获取，失败则 fallback 本地静态表。
-        同时同步 overtime_base（若锁定）。"""
+        同时同步 overtime_base（若锁定）。
+
+        网络请求放在后台线程执行：API 调用最长会等 15 秒，若在主线程同步调用
+        整个界面会在此期间完全冻结（用户感受是“卡死”）。
+        """
         if self._book is None:
             return
         settings = self.store.load_settings()
         api_url = settings.get("api_url", "")
         api_key = settings.get("api_key", "")
         api_model = settings.get("api_model") or None
+        year, month = self._book.year, self._book.month
+        self._set_busy_wage_btn(True)
+        self._set_status(f"正在获取 {province} · {region} 的最低工资…", True)
         # fetch 内部先试 API，失败自动 fallback 本地静态表
-        data = wages.fetch(api_url, api_key, self._book.year, self._book.month,
-                           province, region, api_model=api_model)
+        self._wage_call = worker.run_async(
+            lambda: wages.fetch(api_url, api_key, year, month, province, region,
+                                api_model=api_model),
+            on_done=lambda data: self._on_wage_fetched(
+                province, region, year, month, data),
+            on_failed=lambda msg: self._set_status(f"获取最低工资失败：{msg}", False),
+            on_finished=lambda: self._set_busy_wage_btn(False),
+        )
+
+    def _set_busy_wage_btn(self, busy: bool):
+        """获取按钮的忙碌态（禁用 + 文案）；旧控件已销毁时会自动忽略。"""
+        set_busy_button(getattr(self, "_fetch_wage_btn", None), busy,
+                        "⏳ 获取中…", "🔄 获取最低工资",
+                        enabled=not getattr(self, "_is_locked", False))
+
+    def _on_wage_fetched(self, province: str, region: str,
+                         year: int, month: int, data: dict | None):
+        """后台取回最低工资后的落值（主线程执行）。"""
+        if self._book is None:
+            return
+        # 等待期间用户可能切走了月份：丢弃结果，避免覆盖其它月份的数据
+        if (self._book.year, self._book.month) != (year, month):
+            self._set_status(
+                f"{year}-{month:02d} 的最低工资已取回，但当前月份已切换，结果未套用", False)
+            return
         if data is None:
             self._set_status(f"已选择 {province} · {region}，但未获最低工资数据，需手动输入", False)
             return
@@ -740,16 +739,21 @@ class ParamsPageMixin:
             spin.blockSignals(False)
             setattr(self._book, attr, v)
         if self._ot_base_locked:
-            self._sync_ot_base_with_min_wage(monthly, from_region=True)
+            self._sync_ot_base_with_min_wage(monthly)
         if getattr(self, "_fund_base_locked", False):
             self._sync_fund_base_with_min_wage(monthly)
         self._changed()
+        api_error = data.get("api_error")
         tag = "API" if source == "api" else "本地"
-        self._set_status(f"已按 {province} · {region}（{self._book.year}-{self._book.month:02d}）拉取最低工资 · {tag}", True)
+        msg = f"已按 {province} · {region}（{year}-{month:02d}）拉取最低工资 · {tag}"
+        if api_error:
+            # 配了 API 但没打通：明确告知原因，避免用户误以为用的是联网数据
+            self._set_status(f"{msg}（API 未成功：{api_error}）", False)
+        else:
+            self._set_status(msg, True)
 
-    def _sync_ot_base_with_min_wage(self, min_wage_val: float, from_region: bool = False):
-        """overtime_base 锁定时跟随 min_wage 值更新。
-        from_region=True 时绕过 valueChanged 递归（调用方已 blockSignals 过 min_wage）。"""
+    def _sync_ot_base_with_min_wage(self, min_wage_val: float):
+        """overtime_base 锁定时跟随 min_wage 值更新（调用方通常已 blockSignals）。"""
         ot_spin = self._param_spins.get("overtime_base")
         if ot_spin is None or not self._ot_base_locked:
             return
@@ -769,17 +773,11 @@ class ParamsPageMixin:
             return
         self._ot_base_locked = not self._ot_base_locked
         ot_spin = self._param_spins.get("overtime_base")
-        if ot_spin is not None:
-            ot_spin.setEnabled(not self._ot_base_locked)
-            if self._ot_base_locked:
-                ot_spin.setStyleSheet("background:#F5F7FA;color:#667085;")
-            else:
-                ot_spin.setStyleSheet("")
+        set_field_locked(ot_spin, self._ot_base_locked)
+        set_lock_button_state(self._ot_base_lock_btn, self._ot_base_locked)
         if self._ot_base_locked:
-            self._ot_base_lock_btn.setText("🔒 已锁定 · 冻结当前值")
             self._set_status("已锁定：加班费计算基数保持当前值（后续最低工资变化会同步）", True)
         else:
-            self._ot_base_lock_btn.setText("🔓 已解锁 · 可手动修改")
             self._set_status("已解锁：可手动设置加班费计算基数", True)
         # 广播锁态变化到薪酬构成页
         if hasattr(self, "_sync_ot_base_locked_ui_salary"):
@@ -804,19 +802,13 @@ class ParamsPageMixin:
             return
         self._fund_base_locked = not getattr(self, "_fund_base_locked", True)
         fund_spin = getattr(self, "_fund_base_spin", None)
-        if fund_spin is not None:
-            fund_spin.setEnabled(not self._fund_base_locked)
-            if self._fund_base_locked:
-                fund_spin.setStyleSheet("background:#F5F7FA;color:#667085;")
-            else:
-                fund_spin.setStyleSheet("")
+        set_field_locked(fund_spin, self._fund_base_locked)
         btn = getattr(self, "_fund_base_lock_btn", None)
         if btn is not None:
+            set_lock_button_state(btn, self._fund_base_locked)
             if self._fund_base_locked:
-                btn.setText("🔒 已锁定 · 冻结当前值")
                 self._set_status("已锁定：公积金缴费基数保持当前值（后续最低工资变化会同步）", True)
             else:
-                btn.setText("🔓 已解锁 · 可手动修改")
                 self._set_status("已解锁：可手动设置公积金缴费基数", True)
 
     def _toggle_wage_lock(self):
@@ -826,19 +818,13 @@ class ParamsPageMixin:
         if getattr(self, "_is_locked", False):
             return
         self._wage_locked = not self._wage_locked
-        for attr in ("min_wage", "parttime_min"):
-            spin = self._param_spins.get(attr)
-            if spin is not None:
-                spin.setEnabled(not self._wage_locked)
-                if self._wage_locked:
-                    spin.setStyleSheet("background:#F5F7FA;color:#667085;")
-                else:
-                    spin.setStyleSheet("")
+        set_fields_locked([self._param_spins.get(a)
+                           for a in ("min_wage", "parttime_min")],
+                          self._wage_locked)
+        set_lock_button_state(self._wage_lock_btn, self._wage_locked)
         if self._wage_locked:
-            self._wage_lock_btn.setText("🔒 已锁定 · 冻结当前值")
             self._set_status("已锁定：最低工资保持当前值（后续获取最低工资/切换地区时会同步）", True)
         else:
-            self._wage_lock_btn.setText("🔓 已解锁 · 可手动修改")
             self._set_status("已解锁：可手动修改最低工资标准", True)
 
     # 合规判定相关 UI 已彻底移除，保留后台逻辑在计算引擎中（如需要，Overview/Report 会展示结果）

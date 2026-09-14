@@ -42,6 +42,8 @@ desktop.ini
 _check_*.png
 _report_sample.xlsx
 _bat_run.log
+# 开发时临时脚本（如 _tmp_*.py），一律不入库
+_tmp_*
 
 # ===== 用户数据 =====
 # 应用按月存档（保存在 %LOCALAPPDATA%\工作考勤表\data，不在仓库内）

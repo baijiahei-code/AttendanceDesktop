@@ -47,15 +47,3 @@ BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 MONEY_FMT = '#,##0.00;[Red]-#,##0.00;"—"'
 INT_FMT = '0;[Red]-0;"—"'
 FLT_FMT = '0.0;[Red]-0.0;"—"'
-
-
-def body_cell(cell, *, font=None, fmt=None, align=None):
-    """给已存在的 cell 套统一正文样式（字体 + 边框 + 可选格式 / 对齐）。
-    集中此处的目的是：两处 writer 不必各写一份 setStyle 操作。
-    """
-    cell.font = font or BODY_FONT
-    cell.border = BORDER
-    if fmt is not None:
-        cell.number_format = fmt
-    if align is not None:
-        cell.alignment = align

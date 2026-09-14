@@ -18,6 +18,14 @@
 """
 from __future__ import annotations
 
+import json
+import re
+import socket
+import ssl
+import time
+import urllib.error
+import urllib.request
+
 
 # =======================================================================
 # 安徽省：档级标准可直接修改
@@ -81,8 +89,7 @@ for _city in ("黔江区", "南川区", "开州区", "梁平区", "武隆区",
 # 广东（深圳/广州单列，其余分 A/B/C/D 档）
 # =======================================================================
 _GD_GRADE_SZ = (2360.0, 22.2)   # 深圳
-_GD_GRADE_GZ = (2300.0, 22.2)   # 广州 + 珠海/佛山东莞中山
-_GD_GRADE_A  = (2300.0, 22.2)
+_GD_GRADE_A  = (2300.0, 22.2)   # 广州 + 珠海/佛山东莞中山
 _GD_GRADE_B  = (2100.0, 20.3)   # 惠州/江门/肇庆
 _GD_GRADE_C  = (2010.0, 19.0)   # 汕头/韶关/湛江/茂名/清远/梅州/汕尾/河源/阳江
 _GD_GRADE_D  = (1900.0, 18.0)   # 潮州/揭阳/云浮
@@ -491,10 +498,6 @@ PROVINCES = [
 ]
 
 
-def has_province(name: str) -> bool:
-    return name in _REGION_DATA
-
-
 def get_regions(province: str) -> list[str]:
     """返回某省份下所有地级市名（保序）。"""
     return list(_REGION_DATA.get(province, {}).keys())
@@ -527,74 +530,168 @@ def _chat_model(api_model: str | None) -> str:
     return (api_model or "").strip() or DEFAULT_API_MODEL
 
 
+# ========================= 网络层（三处 API 调用共用） =========================
+# 最低工资查询 / 节假日查询 / 测试连接三个功能走的是同一个 OpenAI 兼容
+# /chat/completions 端点，请求构造、HTTPS 校验、错误翻译完全一致，故收敛到
+# 下面这一层。改超时 / 改错误文案 / 加自定义 Header 都只需改这里。
+
+CHAT_TIMEOUT = 15  # 单次请求超时（秒）：等待过长会让用户误以为程序卡住
+CHAT_PATH = "/chat/completions"
+
+
+class ChatError(Exception):
+    """API 调用失败，message 为可直接展示给用户的中文原因。"""
+
+
+def _endpoint(api_url: str | None) -> str | None:
+    """拼出 /chat/completions 端点；非 https 或地址为空返回 None。
+
+    安全防线：仅允许 HTTPS + 强制校验证书，防止中间人窃取 Bearer Token。
+    当前版本刻意不接 http 本地服务（如 Ollama）。
+    """
+    url = (api_url or "").strip().rstrip("/")
+    if not url:
+        return None
+    endpoint = url + CHAT_PATH
+    return endpoint if endpoint.lower().startswith("https://") else None
+
+
+def _http_reason(code: int) -> str:
+    """HTTP 状态码 → 用户可读原因（三处调用共用同一套文案）。"""
+    if code == 401:
+        return "API Key 无效（401）"
+    if code == 403:
+        return "API Key 无权访问该模型（403）"
+    if code == 404:
+        return "接口地址或模型名不正确（404），请检查 API 地址与模型名"
+    if code == 429:
+        return "调用频率超限（429），请稍后再试"
+    if code >= 500:
+        return f"服务商服务器错误（{code}）"
+    return f"HTTP 错误（{code}）"
+
+
+def _url_reason(err: urllib.error.URLError) -> str:
+    """URLError → 用户可读原因（超时 / 证书 / 其它网络故障）。"""
+    reason = getattr(err, "reason", err)
+    msg = str(reason)
+    if isinstance(reason, socket.timeout) or "timed out" in msg.lower():
+        return "连接超时，请检查网络或 API 地址"
+    if isinstance(reason, ssl.SSLError) or "ssl" in msg.lower() or "certificate" in msg.lower():
+        return f"TLS/证书校验失败：{reason}"
+    return f"网络请求失败：{reason}"
+
+
+def _post_chat(api_url: str | None, api_key: str | None, messages: list,
+               api_model: str | None = None, max_tokens: int | None = None,
+               timeout: int = CHAT_TIMEOUT) -> str:
+    """调用 OpenAI 兼容 /chat/completions，返回首条回复文本。
+
+    失败一律抛 :class:`ChatError`（带可展示原因），由调用方决定回退本地
+    还是直接报错，避免各处重复 try/except 与文案。
+    """
+    endpoint = _endpoint(api_url)
+    if endpoint is None:
+        raise ChatError("API 地址无效：必须以 https:// 开头（当前版本不支持 http 本地服务）")
+    payload: dict = {
+        "model": _chat_model(api_model),
+        "temperature": 0,
+        "messages": messages,
+    }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(
+        endpoint, data=json.dumps(payload).encode("utf-8"),
+        headers=headers, method="POST")
+    ctx = ssl.create_default_context()  # 默认启用 hostname 检查 + 证书链校验
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        raise ChatError(_http_reason(e.code)) from e
+    except urllib.error.URLError as e:
+        raise ChatError(_url_reason(e)) from e
+    except socket.timeout as e:
+        raise ChatError("连接超时，请检查网络或 API 地址") from e
+    except Exception as e:  # noqa: BLE001 - 兜底：任何异常都转成可展示原因
+        raise ChatError(f"网络请求失败：{e}") from e
+    try:
+        body = json.loads(raw)
+    except ValueError as e:
+        raise ChatError(
+            "返回内容不是有效 JSON，可能不是 OpenAI 兼容的 /chat/completions 端点") from e
+    if not isinstance(body, dict):
+        raise ChatError("接口返回结构异常（顶层不是 JSON 对象）")
+    choices = body.get("choices") or []
+    if not choices:
+        raise ChatError("接口返回 200 但无 choices 字段，可能不是兼容的 chat 接口")
+    content = (choices[0].get("message") or {}).get("content") or ""
+    if not content:
+        raise ChatError("接口返回内容为空，请检查模型名是否可用")
+    return content
+
+
 def fetch(api_url: str | None, api_key: str | None,
           year: int, month: int, province: str, region: str,
           api_model: str | None = None) -> dict | None:
     """查询指定年月的最低工资。优先级：
     1. 已配置 API → 先试 Chat API（prompt 带 year/month）
     2. 未配置 API 或 API 失败 → fallback 本地静态表
-    返回 dict {"min_wage": float, "parttime_min": float, "source": "api"|"local"} 或 None。
+
+    返回 dict {"min_wage": float, "parttime_min": float,
+              "source": "api"|"local", "api_error"?: str}。
+    回退本地时若 API 调用失败，额外带 api_error 字段（界面据此提示原因）。
     """
     # 1. 先试 API
     api_result = None
+    api_error: str | None = None
     if api_url and api_key:
-        api_result = _try_chat_api(api_url, api_key, year, month, province, region,
-                                   api_model=api_model)
+        api_result, api_error = _try_chat_api(
+            api_url, api_key, year, month, province, region, api_model=api_model)
     if api_result is not None:
         return api_result
     # 2. fallback 本地静态表
     local = get(province, region)
-    if local is not None:
-        return {"min_wage": local[0], "parttime_min": local[1], "source": "local"}
-    return None
+    if local is None:
+        return None
+    result = {"min_wage": local[0], "parttime_min": local[1], "source": "local"}
+    if api_error:
+        result["api_error"] = api_error
+    return result
 
 
 def _try_chat_api(api_url: str, api_key: str,
                   year: int, month: int, province: str, region: str,
-                  api_model: str | None = None) -> dict | None:
-    """单次 Chat API 调用。prompt 包含用户选择的年份/月份。失败返回 None。"""
+                  api_model: str | None = None) -> tuple[dict | None, str | None]:
+    """单次 Chat API 调用。prompt 包含用户选择的年份/月份。
+
+    返回 (数据, 失败原因)：成功 (dict, None)；失败 (None, "用户可读原因")。
+    """
+    prompt = (
+        f"请查询中国 {province} {region} {year} 年 {month} 月的最低工资标准。"
+        f"返回一个 JSON 对象，只包含两个数值字段：min_wage（月最低工资，单位元）和 parttime_min（非全日制小时最低工资，单位元）。"
+        f"如果找不到 {year} 年 {month} 月的官方发布标准，就用该地区在 {year} 年 {month} 月实际有效的最新标准。"
+        f"直接返回 JSON，不要任何解释、不要 markdown、不要代码块。"
+    )
     try:
-        import ssl
-        import urllib.request
-        import json as _json
-        endpoint = api_url.rstrip("/") + "/chat/completions"
-        # 安全防线：仅允许 HTTPS，强制校验证书，防止中间人窃取 Bearer Token
-        if not endpoint.lower().startswith("https://"):
-            return None
-        prompt = (
-            f"请查询中国 {province} {region} {year} 年 {month} 月的最低工资标准。"
-            f"返回一个 JSON 对象，只包含两个数值字段：min_wage（月最低工资，单位元）和 parttime_min（非全日制小时最低工资，单位元）。"
-            f"如果找不到 {year} 年 {month} 月的官方发布标准，就用该地区在 {year} 年 {month} 月实际有效的最新标准。"
-            f"直接返回 JSON，不要任何解释、不要 markdown、不要代码块。"
-        )
-        payload = {
-            "model": _chat_model(api_model),
-            "temperature": 0,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        data = _json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-        ctx = ssl.create_default_context()  # 默认启用 hostname 检查 + 证书链校验
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            body = _json.loads(resp.read().decode("utf-8"))
-        choices = body.get("choices") or []
-        if not choices:
-            return None
-        content = choices[0].get("message", {}).get("content", "")
-        if not content:
-            return None
-        import re
+        content = _post_chat(api_url, api_key,
+                             [{"role": "user", "content": prompt}],
+                             api_model=api_model)
+    except ChatError as e:
+        return None, str(e)
+    try:
         m = re.search(r"\{[^}]+\}", content, re.DOTALL)
-        raw_json = m.group(0) if m else content.strip()
-        parsed = _json.loads(raw_json)
+        parsed = json.loads(m.group(0) if m else content.strip())
         mw = float(parsed.get("min_wage") or 0)
         ph = float(parsed.get("parttime_min") or 0)
-        if mw <= 0 or ph <= 0:
-            return None
-        return {"min_wage": mw, "parttime_min": ph, "source": "api"}
-    except Exception:
-        return None
+    except (ValueError, TypeError, AttributeError):
+        return None, "模型返回的不是要求的 JSON 格式（可换用更擅长结构化输出的模型，或改用本地表）"
+    if mw <= 0 or ph <= 0:
+        return None, "模型未返回有效数额（需同时给出 min_wage 与 parttime_min）"
+    return {"min_wage": mw, "parttime_min": ph, "source": "api"}, None
 
 
 # —— 节假日 API：独立于最低工资 API，复用相同连接信息 ——
@@ -611,14 +708,20 @@ def fetch_holidays(api_url: str | None, api_key: str | None,
                    year: int, api_model: str | None = None) -> dict | None:
     """查询某年的法定节假日/放假调休/补班日。
     优先级：已配置 API 先试 → 失败 fallback 到本地 holidays.py。
+
+    API 失败且回退本地时，返回的 dict 多带一个 api_error 字段（界面据此提示原因）。
     """
     # 1. 先试 API
+    api_error: str | None = None
     if api_url and api_key:
-        r = _try_holiday_api(api_url, api_key, year, api_model=api_model)
+        r, api_error = _try_holiday_api(api_url, api_key, year, api_model=api_model)
         if r is not None:
             return r
     # 2. fallback 本地静态表
-    return _holidays_from_local(year)
+    local = _holidays_from_local(year)
+    if local is not None and api_error:
+        local["api_error"] = api_error
+    return local
 
 
 def _holidays_from_local(year: int) -> dict | None:
@@ -635,78 +738,65 @@ def _holidays_from_local(year: int) -> dict | None:
     }
 
 
+def _clean_mmdd(arr) -> list[str]:
+    """把模型返回的日期数组规范成去重排序的 MM-DD 列表（无法识别的项直接丢弃）。"""
+    clean: list[str] = []
+    if not isinstance(arr, list):
+        return clean
+    for s in arr:
+        parts = str(s).strip().replace("/", "-").split("-")
+        if len(parts) == 2:
+            mm, dd = parts
+        elif len(parts) == 3:  # 兼容 YYYY-MM-DD
+            mm, dd = parts[1], parts[2]
+        else:
+            continue
+        try:
+            mi, di = int(mm), int(dd)
+        except ValueError:
+            continue
+        if not (1 <= mi <= 12 and 1 <= di <= 31):
+            continue
+        item = f"{mi:02d}-{di:02d}"
+        if item not in clean:
+            clean.append(item)
+    return sorted(clean)
+
+
 def _try_holiday_api(api_url: str, api_key: str, year: int,
-                     api_model: str | None = None) -> dict | None:
-    """调用 Chat API 查询某年中国法定节假日安排；失败返回 None。"""
+                     api_model: str | None = None) -> tuple[dict | None, str | None]:
+    """调用 Chat API 查询某年中国法定节假日安排。
+
+    返回 (数据, 失败原因)：成功 (dict, None)；失败 (None, "用户可读原因")。
+    """
+    prompt = (
+        f"请查询中国国务院办公厅发布的 {year} 年法定节假日放假安排（含每个节假日的"
+        f"法定日、放假调休区间、调休补班日）。"
+        "返回一个 JSON 对象，只包含三个数组字段："
+        "1) statutory：数组，每项为 MM-DD 格式的法定节假日日期（×3加班的那一天）。"
+        "2) rest：数组，每项为 MM-DD 格式的放假调休日（包括法定日和拼假休息日）。"
+        "3) makeup：数组，每项为 MM-DD 格式的调休补班日（原本是周末但需要上班的日子）。"
+        "严格基于官方发布的安排，不要臆造。直接返回 JSON，不要任何解释、不要 markdown、不要代码块。"
+    )
     try:
-        import ssl
-        import urllib.request
-        import json as _json
-        endpoint = api_url.rstrip("/") + "/chat/completions"
-        if not endpoint.lower().startswith("https://"):
-            return None
-        prompt = (
-            f"请查询中国国务院办公厅发布的 {year} 年法定节假日放假安排（含每个节假日的"
-            f"法定日、放假调休区间、调休补班日）。"
-            "返回一个 JSON 对象，只包含三个数组字段："
-            "1) statutory：数组，每项为 MM-DD 格式的法定节假日日期（×3加班的那一天）。"
-            "2) rest：数组，每项为 MM-DD 格式的放假调休日（包括法定日和拼假休息日）。"
-            "3) makeup：数组，每项为 MM-DD 格式的调休补班日（原本是周末但需要上班的日子）。"
-            "严格基于官方发布的安排，不要臆造。直接返回 JSON，不要任何解释、不要 markdown、不要代码块。"
-        )
-        payload = {
-            "model": _chat_model(api_model),
-            "temperature": 0,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        data = _json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-        ctx = ssl.create_default_context()
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            body = _json.loads(resp.read().decode("utf-8"))
-        choices = body.get("choices") or []
-        if not choices:
-            return None
-        content = choices[0].get("message", {}).get("content", "")
-        if not content:
-            return None
-        # 提取 JSON 块（兼容 ```json ``` 包装）
-        import re as _re
-        m = _re.search(r"\{[\s\S]*\}", content)
-        raw_json = m.group(0) if m else content.strip()
-        parsed = _json.loads(raw_json)
-        result = {}
-        for key in ("statutory", "rest", "makeup"):
-            arr = parsed.get(key) or []
-            if not isinstance(arr, list):
-                return None
-            # 规范化成 MM-DD 格式，过滤无效项
-            clean = []
-            for s in arr:
-                s = str(s).strip()
-                if not s:
-                    continue
-                if "/" in s:
-                    s = s.replace("/", "-")
-                parts = s.split("-")
-                if len(parts) == 2:
-                    mm, dd = parts
-                elif len(parts) == 3:
-                    mm, dd = parts[1], parts[2]
-                else:
-                    continue
-                try:
-                    clean.append(f"{int(mm):02d}-{int(dd):02d}")
-                except ValueError:
-                    continue
-            result[key] = clean
-        if not result["statutory"] and not result["rest"] and not result["makeup"]:
-            return None
-        result["source"] = "api"
-        return result
-    except Exception:
-        return None
+        content = _post_chat(api_url, api_key,
+                             [{"role": "user", "content": prompt}],
+                             api_model=api_model)
+    except ChatError as e:
+        return None, str(e)
+    try:
+        m = re.search(r"\{[\s\S]*\}", content)
+        parsed = json.loads(m.group(0) if m else content.strip())
+    except ValueError:
+        return None, "模型返回的节假日数据不是有效 JSON（可换用更擅长结构化输出的模型）"
+    if not isinstance(parsed, dict):
+        return None, "模型返回结构异常（顶层不是 JSON 对象）"
+    result: dict = {k: _clean_mmdd(parsed.get(k))
+                    for k in ("statutory", "rest", "makeup")}
+    if not any(result.values()):
+        return None, "模型未返回任何节假日日期，请稍后重试或改用本地表"
+    result["source"] = "api"
+    return result, None
 
 
 def test_connection(api_url: str | None, api_key: str | None,
@@ -716,62 +806,14 @@ def test_connection(api_url: str | None, api_key: str | None,
     返回 (True, "连接成功（xxx ms · 模型 xxx）") 或 (False, 具体原因)。
     供「API 设置」里的「测试连接」使用：能直接看出 Key 无效 / 模型名不对 /
     接口地址错 / 超时等问题。仅支持 https（当前版本不接本地 http 服务）。
-    """
-    import json as _json
-    import socket
-    import ssl
-    import time
-    import urllib.error
-    import urllib.request
 
-    endpoint = (api_url or "").rstrip("/") + "/chat/completions"
-    if not endpoint.lower().startswith("https://"):
-        return False, "API 地址必须以 https:// 开头（当前版本不支持 http 本地服务）"
-    model = _chat_model(api_model)
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": "请只回复：ok"}],
-        "max_tokens": 8,
-        "temperature": 0,
-    }
-    data = _json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-    ctx = ssl.create_default_context()
+    错误文案与运行时调用完全一致 —— 都来自 _post_chat / ChatError。
+    """
     start = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            ms = int((time.monotonic() - start) * 1000)
-            try:
-                body = _json.loads(resp.read().decode("utf-8"))
-            except Exception:
-                return False, "返回内容不是有效 JSON，可能不是 OpenAI 兼容的 /chat/completions 端点"
-            choices = body.get("choices") or []
-            if not choices:
-                return False, "返回 200 但无 choices 字段，可能不是兼容的 chat 接口"
-            return True, f"连接成功（{ms} ms · 模型 {model}）"
-    except urllib.error.HTTPError as e:
-        code = e.code
-        if code == 401:
-            return False, "API Key 无效（401）"
-        if code == 403:
-            return False, "API Key 无权访问该模型（403）"
-        if code == 404:
-            return False, "接口地址或模型名不正确（404），请检查 API 地址与模型名"
-        if code == 429:
-            return False, "调用频率超限（429）"
-        if code >= 500:
-            return False, f"服务器错误：{code}"
-        return False, f"HTTP 错误：{code}"
-    except urllib.error.URLError as e:
-        reason = getattr(e, "reason", e)
-        msg = str(reason)
-        if isinstance(reason, socket.timeout) or "timed out" in msg.lower():
-            return False, "连接超时，请检查网络或 API 地址"
-        if isinstance(reason, ssl.SSLError) or "ssl" in msg.lower() or "certificate" in msg.lower():
-            return False, f"TLS/证书校验失败：{reason}"
-        return False, f"网络请求失败：{reason}"
-    except Exception as e:  # noqa: BLE001
-        return False, f"网络请求失败：{e}"
+        _post_chat(api_url, api_key, [{"role": "user", "content": "请只回复：ok"}],
+                   api_model=api_model, max_tokens=8)
+    except ChatError as e:
+        return False, str(e)
+    ms = int((time.monotonic() - start) * 1000)
+    return True, f"连接成功（{ms} ms · 模型 {_chat_model(api_model)}）"

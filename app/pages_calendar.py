@@ -10,8 +10,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QVBoxLayout, QSizePolicy,
 )
 
-from . import model, wages
-from .ui import DAY_PALETTE, STATUS_ORDER, NumberSpin
+from . import model, wages, worker
+from .ui import (DAY_PALETTE, STATUS_ORDER, NumberSpin, make_lock_banner,
+                 set_busy_button, show_lock_banner)
 from .widgets import Card
 
 
@@ -31,12 +32,7 @@ class CalendarPageMixin:
         self._calendar_cards: list[Card] = []
 
         # —— 🔒 只读模式提示横幅（锁定时才显示）——
-        self._lock_banner = QLabel("🔒  当前月份已锁定 · 仅供查看，所有修改操作已屏蔽")
-        self._lock_banner.setStyleSheet(
-            "background:#FEF4E6;color:#B54708;border:1px solid #FEDF89;"
-            "border-radius:8px;padding:8px 14px;font-weight:600;font-size:13px;")
-        self._lock_banner.setWordWrap(True)
-        self._lock_banner.hide()
+        self._lock_banner = make_lock_banner()
         lay.addWidget(self._lock_banner)
 
         bar = QHBoxLayout()
@@ -60,6 +56,7 @@ class CalendarPageMixin:
             "border-radius:9px;padding:5px 10px;font-weight:600;}"
             "QPushButton:hover{background:#D1FAE5;}")
         api_fill_btn.clicked.connect(self._api_fill_holidays)
+        self._api_fill_btn = api_fill_btn  # 后台请求期间显示忙碌态
         clear_btn = QPushButton("清空考勤")
         clear_btn.setObjectName("danger")
         clear_btn.clicked.connect(self._clear_days)
@@ -149,8 +146,7 @@ class CalendarPageMixin:
                 except Exception:
                     pass
         # 4) 锁定横幅
-        if hasattr(self, "_lock_banner") and self._lock_banner is not None:
-            self._lock_banner.setVisible(bool(locked))
+        show_lock_banner(getattr(self, "_lock_banner", None), locked)
 
     def _build_day_panel(self):
         panel = Card(title="", variant="default", margins=(14, 12, 14, 12))
@@ -420,18 +416,50 @@ class CalendarPageMixin:
           - rest 放假调休日（除法定已处理） → 强制 status=休息
           - 周末 → 强制 status=休息
         已填日期 **会被覆盖**（节假日/调休类日期需要精确值）。
+
+        网络请求放后台线程：API 最长等 15 秒，同步调用会让界面冻结。
         """
         if self._loading or not self._book:
             return
         if getattr(self, "_is_locked", False):
             self._set_status("月份已锁定，无法 API 铺设", False)
             return
+        if getattr(self, "_api_fill_busy", False):
+            return  # 已有请求在跑，忽略重复点击
         y, m = self._book.year, self._book.month
         settings = self.store.load_settings()
         api_url = settings.get("api_url", "")
         api_key = settings.get("api_key", "")
         api_model = settings.get("api_model") or None
-        data = wages.fetch_holidays(api_url, api_key, y, api_model=api_model)
+        self._api_fill_busy = True
+        self._set_api_fill_busy(True)
+        src = "API" if (api_url and api_key) else "本地表"
+        self._set_status(f"正在获取 {y} 年节假日安排（{src}）…", True)
+        self._holiday_call = worker.run_async(
+            lambda: wages.fetch_holidays(api_url, api_key, y, api_model=api_model),
+            on_done=lambda data: self._apply_holidays(y, m, data),
+            on_failed=lambda msg: self._set_status(f"获取节假日失败：{msg}", False),
+            on_finished=self._on_holiday_fetch_done,
+        )
+
+    def _set_api_fill_busy(self, busy: bool):
+        """「API 一键铺」按钮忙碌态；按钮可能已随页面重建而销毁，会自动忽略。"""
+        set_busy_button(getattr(self, "_api_fill_btn", None), busy,
+                        "⏳ 获取中…", "🌐 API 一键铺（法定节假日/调休）",
+                        enabled=not getattr(self, "_is_locked", False))
+
+    def _on_holiday_fetch_done(self):
+        self._api_fill_busy = False
+        self._set_api_fill_busy(False)
+
+    def _apply_holidays(self, y: int, m: int, data: dict | None):
+        """后台取回节假日后在主线程铺设（含月份切换保护）。"""
+        if self._book is None:
+            return
+        if (self._book.year, self._book.month) != (y, m):
+            self._set_status(
+                f"{y} 年节假日已取回，但当前月份已切换，结果未铺设", False)
+            return
         if data is None:
             self._set_status(f"{y} 年节假日数据未找到（API 和本地表都没有），无法铺设", False)
             return
@@ -466,9 +494,14 @@ class CalendarPageMixin:
                 changed_count += 1
         self._render_calendar()
         self._changed()
+        api_error = data.get("api_error")
         tag = "API" if source == "api" else "本地"
-        self._set_status(
-            f"节假日铺设完成 · {tag} 来源 · {y} 年 · 影响 {changed_count} 天", True)
+        msg = f"节假日铺设完成 · {tag} 来源 · {y} 年 · 影响 {changed_count} 天"
+        if api_error:
+            # 配了 API 但没打通：明确告知原因，避免用户误以为用的是联网数据
+            self._set_status(f"{msg}（API 未成功：{api_error}）", False)
+        else:
+            self._set_status(msg, True)
 
     def _show_day_menu(self, day):
         """日历格子右键：快捷设置状态 / 法定节假日标记。"""

@@ -16,11 +16,10 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from .. import config, model
-from ..ui import NumberSpin
+from ..ui import NumberSpin, make_lock_button
 
 
 class OvertimeCardWidget(QFrame):
@@ -70,10 +69,7 @@ class OvertimeCardWidget(QFrame):
         ob_sp.setMinimumWidth(90)
         ob_sp.setMaximumWidth(220)
         self._spins["overtime_base"] = ob_sp
-        self._lock_btn = QPushButton("🔒 已锁定 · 冻结当前值")
-        self._lock_btn.setObjectName("ghost")
-        self._lock_btn.setCursor(Qt.PointingHandCursor)
-        self._lock_btn.setToolTip(
+        self._lock_btn = make_lock_button(
             "锁定时自动等于月最低工资；点击解锁可手动改为不同值（与参数页加班费计算基数同步）")
         ob_lay = QHBoxLayout()
         ob_lay.setSpacing(8)

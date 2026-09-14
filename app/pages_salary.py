@@ -14,11 +14,12 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
+    QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
     QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from . import model
+from .ui import make_lock_banner, set_field_locked, set_lock_button_state, show_lock_banner
 from .widgets import (
     DeductionCardWidget, OvertimeCardWidget, PayItemListWidget, SalaryStripWidget,
 )
@@ -43,12 +44,7 @@ class SalaryPageMixin:
         self._salary_modify_widgets: list = []
 
         # —— 🔒 只读模式提示横幅（锁定时才显示）——
-        self._lock_banner = QLabel("🔒  当前月份已锁定 · 仅供查看，所有修改操作已屏蔽")
-        self._lock_banner.setStyleSheet(
-            "background:#FEF4E6;color:#B54708;border:1px solid #FEDF89;"
-            "border-radius:8px;padding:8px 14px;font-weight:600;font-size:13px;")
-        self._lock_banner.setWordWrap(True)
-        self._lock_banner.hide()
+        self._lock_banner = make_lock_banner()
         lay.addWidget(self._lock_banner)
 
         # —— 顶部金额 strip ——
@@ -92,8 +88,6 @@ class SalaryPageMixin:
         self._salary_spins.update(self._ded_card.spins)
         for attr, sp in self._salary_spins.items():
             sp.valueChanged.connect(lambda _v, a=attr: self._on_salary_attr(a))
-        # 加班数三档被 ot_auto 锁开关控制时启用状态
-        self._ot_auto_chk = self._get_ot_auto_chk()    # 参数页是开关源；薪酬页只 mirror
         self._ded_card.tax_auto.toggled.connect(self._on_tax_auto)
 
         # 加班费基数锁按钮：复用主页面 _toggle_ot_base_lock
@@ -128,8 +122,7 @@ class SalaryPageMixin:
                 self.pay_items.set_locked_mode(locked)
             except Exception:
                 pass
-        if hasattr(self, "_lock_banner") and self._lock_banner is not None:
-            self._lock_banner.setVisible(bool(locked))
+        show_lock_banner(getattr(self, "_lock_banner", None), locked)
         # 月份解锁（非整月只读）后：重放字段级锁，避免 ot_auto / 个税自动 / 加班基数锁
         # 对应的输入框被 setEnabled(True) 一并放开。
         if not locked:
@@ -213,17 +206,6 @@ class SalaryPageMixin:
     # ---------------------------------------------------------------------
     # 加班基数锁 / 自动开关
     # ---------------------------------------------------------------------
-    def _get_ot_auto_chk(self) -> QCheckBox:
-        """参数页是 ot_auto 开关的拥有者，薪酬页只是镜像其状态。
-        若主页面尚未就绪（极少发生），返回空 CheckBox 占位。"""
-        chk = getattr(self, "_ot_auto_chk_main", None)
-        if isinstance(chk, QCheckBox):
-            return chk
-        chk = QCheckBox()
-        chk.setVisible(False)
-        chk.setChecked(bool(getattr(self._book, "ot_auto", False)))
-        return chk
-
     def _on_salary_attr(self, attr: str):
         """任一 spin 改值：写回 book，并对 overtime_base 同步参数页。"""
         if self._loading or not self._book or attr not in self._salary_spins:
@@ -240,15 +222,6 @@ class SalaryPageMixin:
                 psp.blockSignals(False)
         self._pi_touched()
 
-    def _on_ot_auto(self, checked: bool):
-        if self._loading or self._book is None:
-            return
-        if getattr(self, "_is_locked", False):
-            return  # 锁定只读
-        self._book.ot_auto = bool(checked)
-        self._apply_auto_states()
-        self._pi_touched()
-
     def _on_tax_auto(self, checked: bool):
         if self._loading or self._book is None:
             return
@@ -259,7 +232,13 @@ class SalaryPageMixin:
         self._pi_touched()
 
     def _apply_auto_states(self):
-        """根据 ot_auto / income_tax_auto 启用/停用对应输入框。"""
+        """按 book 里的自动开关状态启用/停用对应输入框。
+
+        * ``income_tax_auto`` → 个税自动按预扣率表算，禁用个税输入框（界面上有开关）；
+        * ``ot_auto`` → 加班小时改为按考勤逐日汇总，禁用三档小时输入框。
+          当前版本**不在界面上提供**这个开关，这里保留分支仅为兼容
+          ``ot_auto=True`` 的历史存档（否则那几个月的手填小时数会失效）。
+        """
         if not hasattr(self, "_salary_spins") or self._book is None:
             return
         ot_auto = bool(getattr(self._book, "ot_auto", False))
@@ -267,8 +246,6 @@ class SalaryPageMixin:
             sp = self._salary_spins.get(attr)
             if sp is not None:
                 sp.setEnabled(not ot_auto)
-        if hasattr(self, "_ot_auto_chk") and self._ot_auto_chk.isChecked() != ot_auto:
-            self._ot_auto_chk.setChecked(ot_auto)
         tax_auto = bool(getattr(self._book, "income_tax_auto", False))
         sp = self._salary_spins.get("income_tax")
         if sp is not None:
@@ -308,11 +285,7 @@ class SalaryPageMixin:
             return
         sp = self._salary_spins["overtime_base"]
         locked = bool(getattr(self, "_ot_base_locked", True))
-        sp.setEnabled(not locked)
-        if locked:
-            sp.setStyleSheet("background:#F5F7FA;color:#667085;")
-        else:
-            sp.setStyleSheet("")
+        set_field_locked(sp, locked)
         if self._book is not None:
             cur = float(getattr(self._book, "overtime_base") or 0.0)
             if abs(sp.value() - cur) > 1e-6:
@@ -321,8 +294,7 @@ class SalaryPageMixin:
                 sp.blockSignals(False)
         btn = getattr(self, "_ot_card", None)
         if btn is not None:
-            btn.lock_btn.setText("🔒 已锁定 · 冻结当前值" if locked
-                                  else "🔓 已解锁 · 可手动修改")
+            set_lock_button_state(btn.lock_btn, locked)
 
     def _on_copy_pay_items(self):
         """复制当前月工资项 + 固定加班工资 + 大病医疗补助到其它月份。

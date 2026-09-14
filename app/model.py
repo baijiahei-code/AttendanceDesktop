@@ -9,6 +9,8 @@ from datetime import date
 
 STATUS_LABELS = ["上班", "休息", "事假", "病假", "婚假", "丧假", "产假", "年假", "其他"]
 # 属于「提供正常劳动」的状态：上班 + 法定带薪假期（Excel B15 口径）
+# 视为「提供正常劳动」的状态（与 calc._count_attendance 的字段汇总口径一致，
+# 改这里必须同步 calc，否则合规天数会与报表不一致）
 NORMAL_LABOR_STATUSES = {"上班", "婚假", "丧假", "产假", "年假"}
 MARK_LABELS = ["", "法定节假日", "其他视为提供正常劳动的天数"]
 
@@ -29,6 +31,7 @@ PAYITEM_TYPE_DESC = {
     "perday_allow": "每日标准 × 上班天数 · 不计入最低工资标准",
 }
 # 工资项分类：是否计入最低工资判定
+# 计入「最低工资」判定口径的工资项类型（实际汇总在 calc._pay_item_totals）
 PAYITEM_COUNTS_IN_MIN = frozenset({"wage"})
 # 新增一项时的默认名称
 PAYITEM_DEFAULT_NAME = {
@@ -102,10 +105,6 @@ class PayItem:
             amount=_safe_float(raw.get("amount"), 0.0),
         )
 
-    def counts_into_min_wage(self) -> bool:
-        """该项是否计入最低工资判定口径。"""
-        return self.type in PAYITEM_COUNTS_IN_MIN
-
     def is_per_day(self) -> bool:
         """是否为每日标准 × 上班天数 汇总。"""
         return self.type == "perday_allow"
@@ -122,8 +121,6 @@ def build_common_pay_items() -> list[PayItem]:
 
 # ====== DayEntry：每日考勤 ======
 
-_WEEKDAY_LABELS = "一二三四五六日"
-
 
 @dataclass
 class DayEntry:
@@ -133,18 +130,8 @@ class DayEntry:
     overtime_hours: float = 0.0
     leave_hours: float = 0.0
 
-    def weekday_label(self, year: int, month: int) -> str:
-        return _WEEKDAY_LABELS[date(year, month, self.day).weekday()]
-
     def is_weekend_dt(self, year: int, month: int) -> bool:
         return date(year, month, self.day).weekday() >= 5
-
-    def counts_as_normal_labor(self) -> bool:
-        """当日是否视作「提供正常劳动」：
-        正常劳动状态 或 mark=1/2 的标记日。"""
-        if self.status in NORMAL_LABOR_STATUSES:
-            return True
-        return self.mark >= 1
 
 
 def days_in_month(year: int, month: int) -> int:

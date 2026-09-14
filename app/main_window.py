@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 import traceback
 from datetime import datetime
 
@@ -13,7 +14,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QSpinBox, QStackedWidget, QVBoxLayout, QWidget, QSizePolicy,
 )
 
-from . import calc, model
+from . import calc, model, worker
 from .storage import MonthStore
 from .style import STYLE
 from .ui import PAGES, PAGE_TITLES
@@ -522,10 +523,6 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         # 立即把整页 UI 锁态同步到新状态（无需切月才生效）
         self._apply_lock_state(bool(self._book.locked))
 
-    def _new_month(self):
-        now = datetime.now()
-        self._go(now.year, now.month)
-
     def _delete_month(self):
         if not self._book:
             return
@@ -747,13 +744,16 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         # 150ms 内连改只触发一次：写盘 + 重建报表/概览（如可见）
         self._change_timer.start()
 
-    def _flush_changed(self):
+    def _flush_changed(self) -> bool:
         """合并定时器到点：跑一次真正的重算 + 渲染 + 写盘。
-        锁定月份：不写盘，但允许做只读 render（让刷新继续可用）。"""
+
+        锁定月份：不写盘，但允许做只读 render（让刷新继续可用）。
+        返回本次是否成功落盘（锁定月不写盘，视为成功）。
+        """
         self._change_timer.stop()
         if self._loading or not self._book:
             self._dirty = False
-            return
+            return False
         try:
             r = calc.compute(self._book)
             if self._is_locked:
@@ -764,14 +764,18 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
                     self._update_cal_count()
                 if self._current_page_idx == 2:
                     self._sync_salary_ui()
-                return
+                return True
             self._render_all(r)
             self.store.save(self._book)
-            self._set_status("已保存 " + datetime.now().strftime("%H:%M:%S"), True)
+            # background：用户刚做过的操作提示还在展示期内时，不拿“已保存”顶掉它
+            self._set_status("已保存 " + datetime.now().strftime("%H:%M:%S"),
+                             True, background=True)
             self._dirty = False
+            return True
         except Exception as ex:
             self._set_status("出错：" + str(ex), False)
             traceback.print_exc()
+            return False
 
     def _show_about(self):
         """关于 / 免责声明。"""
@@ -787,13 +791,38 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
             "社保 / 公积金 / 个税等参数需按当地政策自行核对。<br>"
             "<b>用于正式发薪前请务必人工复核。</b></p>")
 
-    def _set_status(self, text, ok=True):
+    # 状态栏提示的驻留时长（毫秒）：业务结果提示得停留一会儿，
+    # 否则 150ms 后自动保存的「已保存 12:34:56」会把它顶掉，提示等于没显示。
+    STATUS_HOLD_MS = 3000
+    STATUS_HOLD_MS_ERR = 6000   # 失败提示更需要看清
+
+    def _set_status(self, text, ok=True, *, background: bool = False):
+        """更新底部状态栏。
+
+        :param background: True 表示「后台动作的反馈」（如自动保存完成）。
+            若此刻正处于上一条业务提示的驻留期内，则跳过不覆盖。
+        """
         if not hasattr(self, "status_label"):
+            return
+        now = time.monotonic()
+        if background and now < getattr(self, "_status_hold_until", 0.0):
             return
         self.status_label.setText(text)
         self.status_label.setObjectName("statusOk" if ok else "statusErr")
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
+        hold = self.STATUS_HOLD_MS if ok else self.STATUS_HOLD_MS_ERR
+        self._status_hold_until = now + hold / 1000.0
+
+    def closeEvent(self, event):
+        """关闭窗口：放弃未完成的 API 后台任务，避免回调操作已销毁的控件。"""
+        try:
+            from PySide6.QtCore import QThreadPool
+            worker.cancel_all()
+            QThreadPool.globalInstance().clear()  # 丢弃尚未启动的任务
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def _manual_save(self):
         if not self._book:
@@ -801,9 +830,11 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         if self._is_locked:
             self._set_status("月份已锁定，无法保存", False)
             return
-        # 若有合并中的改动，先 flush 再保存
+        # 若有合并中的改动，先立刻落盘
         if self._dirty:
-            self._flush_changed()
+            if self._flush_changed():
+                # 用户主动点的保存，必须给回馈（不被上面的 background 规则抑制）
+                self._set_status("已保存 " + datetime.now().strftime("%H:%M:%S"), True)
             return
         self.store.save(self._book)
         self._set_status("已保存 " + datetime.now().strftime("%H:%M:%S"), True)

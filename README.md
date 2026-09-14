@@ -72,6 +72,7 @@ pyinstaller==6.22.2
 │   ├── storage.py           月份存档 + Settings（含 Windows DPAPI 加密）
 │   ├── holidays.py          法定节假日 / 调休表（按年查）+ API 调用
 │   ├── wages.py             全国最低工资标准（省 / 地二级，查 + API 回填）
+│   ├── worker.py            后台任务（网络请求不阻塞界面）
 │   ├── excel_style.py       Excel 导出统一样式（openpyxl）
 │   ├── style.py             Qt 样式表（QSS）
 │   ├── config.py            应用级常量（文案 / tooltip / 参数名）

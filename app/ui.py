@@ -1,11 +1,11 @@
-"""通用 UI 常量与小组件：导航页表 / 状态配色 / 数字输入 / 可点击卡片。
+"""通用 UI 常量与小组件：导航页表 / 状态配色 / 数字输入 / 锁定控件辅助。
 
 与 design token（style.py）及网页原型配色保持一致。
 """
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDoubleSpinBox, QFrame, QSizePolicy
+from PySide6.QtWidgets import QDoubleSpinBox, QLabel, QPushButton, QSizePolicy
 
 from . import model
 
@@ -42,6 +42,99 @@ DAY_PALETTE = {
 # 状态顺序与标签单一来源：model.STATUS_LABELS（勿再各自维护一份）
 STATUS_ORDER = list(model.STATUS_LABELS)
 
+# 锁定 / 只读态输入框样式（锁定月、跟随最低工资的字段都用它，
+# 避免在 pages_* 里重复手写同一串 QSS）
+LOCKED_INPUT_QSS = "background:#F5F7FA;color:#667085;"
+
+# 锁定月的只读提示横幅
+LOCK_BANNER_TEXT = "🔒  当前月份已锁定 · 仅供查看，所有修改操作已屏蔽"
+
+# 「跟随最低工资」类字段的切锁按钮文案（最低工资 / 加班费基数 / 公积金基数共用）
+LOCK_BTN_LOCKED_TEXT = "🔒 已锁定 · 冻结当前值"
+LOCK_BTN_UNLOCKED_TEXT = "🔓 已解锁 · 可手动修改"
+
+
+def make_lock_button(tooltip: str, on_click=None) -> QPushButton:
+    """统一的字段级切锁按钮（🔒 已锁定 / 🔓 已解锁）。
+
+    文案随状态变化，请配合 :func:`set_lock_button_state` 使用。
+    """
+    btn = QPushButton(LOCK_BTN_LOCKED_TEXT)
+    btn.setCursor(Qt.PointingHandCursor)
+    btn.setObjectName("ghost")
+    btn.setToolTip(tooltip)
+    if on_click is not None:
+        btn.clicked.connect(on_click)
+    return btn
+
+
+def set_lock_button_state(btn, locked: bool) -> None:
+    """按锁定态刷新切锁按钮文案（按钮不存在时忽略）。"""
+    if btn is None:
+        return
+    try:
+        btn.setText(LOCK_BTN_LOCKED_TEXT if locked else LOCK_BTN_UNLOCKED_TEXT)
+    except RuntimeError:
+        pass
+
+
+def make_lock_banner(parent=None) -> QLabel:
+    """锁定月的只读提示横幅（考勤 / 薪酬 / 参数三页共用，默认隐藏）。"""
+    lab = QLabel(LOCK_BANNER_TEXT, parent)
+    lab.setStyleSheet(
+        "background:#FEF4E6;color:#B54708;border:1px solid #FEDF89;"
+        "border-radius:8px;padding:8px 14px;font-weight:600;font-size:13px;")
+    lab.setWordWrap(True)
+    lab.hide()
+    return lab
+
+
+def show_lock_banner(lab, visible: bool) -> None:
+    """按锁定态显隐只读横幅（横幅尚未创建 / 已销毁时安全忽略）。"""
+    if lab is None:
+        return
+    try:
+        lab.setVisible(bool(visible))
+    except RuntimeError:
+        pass
+
+
+def set_busy_button(btn, busy: bool, busy_text: str, idle_text: str,
+                    enabled: bool = True) -> None:
+    """切换按钮的「进行中」态（文案 + 可用性）。
+
+    :param enabled: 任务结束后按钮是否可用（锁定月传 False，避免解锁被忽略）
+    按钮可能已随页面重建而销毁，此时静默忽略。
+    """
+    if btn is None:
+        return
+    try:
+        btn.setText(busy_text if busy else idle_text)
+        btn.setEnabled(not busy and enabled)
+    except RuntimeError:
+        pass
+
+
+def set_field_locked(spin, locked: bool) -> None:
+    """切换输入框的「字段级锁定」态：锁定时禁用 + 灰底，解锁时恢复。
+
+    与整月只读（Card.set_locked）不是一回事：最低工资 / 加班费基数 /
+    公积金基数在月份未锁定时也可能处于「跟随最低工资」的锁定态。
+    """
+    if spin is None:
+        return
+    try:
+        spin.setEnabled(not locked)
+        spin.setStyleSheet(LOCKED_INPUT_QSS if locked else "")
+    except RuntimeError:
+        pass
+
+
+def set_fields_locked(spins, locked: bool) -> None:
+    """批量版 :func:`set_field_locked`（None 项自动跳过）。"""
+    for sp in spins:
+        set_field_locked(sp, locked)
+
 
 class NumberSpin(QDoubleSpinBox):
     """带千分位、可设精度/步长/前后缀的数字输入框。"""
@@ -60,31 +153,3 @@ class NumberSpin(QDoubleSpinBox):
             # 使用最小宽度替代固定宽度，以便在窄屏上允许挤压布局
             self.setMinimumWidth(80)
             self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-
-
-class ClickTile(QFrame):
-    """可点击的卡片（hover 高亮 + 点击回调）。"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._cb = None
-
-    def set_click(self, cb):
-        self._cb = cb
-
-    def mouseReleaseEvent(self, e):
-        if e.button() == Qt.LeftButton and self._cb is not None:
-            self._cb()
-        super().mouseReleaseEvent(e)
-
-    def enterEvent(self, e):
-        self.setProperty("hover", True)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        super().enterEvent(e)
-
-    def leaveEvent(self, e):
-        self.setProperty("hover", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        super().leaveEvent(e)

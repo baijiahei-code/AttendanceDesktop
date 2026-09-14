@@ -12,16 +12,18 @@
 ```
 main.py                    # 应用入口（仓库根：创建 QApplication / MonthStore / MainWindow）
 app/
-├── __init__.py              # 空，仅作 package 标记
+├── __init__.py              # 仅一行包说明（实际导入都在各模块显式写）
 ├── model.py                 # 数据类：MonthBook, PayItem, DayEntry, ...
 ├── calc.py                  # 工资核算引擎（compute(book) -> Result）
-├── storage.py               # 月份存档 + Settings（含 Windows DPAPI 加密）
+├── storage.py               # 月份存档 + Settings（含 Windows DPAPI 加密 + 读取缓存）
 ├── holidays.py              # 法定节假日 / 调休表（按年查）+ API 调用
 ├── wages.py                 # 全国最低工资标准（省/地二级，查 + API 回填）
+├── worker.py                # 后台任务（QThreadPool）：网络请求不阻塞界面
 ├── excel_style.py           # Excel 导出的统一样式（HEADER_FILL/BODY_FONT/...）
 ├── style.py                 # Qt 样式表（QSS）
 ├── config.py                # 应用级常量（按钮文案、tooltip、参数名）
-├── ui.py                    # 通用 widget 工具（NumberSpin、ClickTile、PAGES 表）
+├── ui.py                    # 通用 widget 工具（NumberSpin、PAGES 表、锁按钮、
+│                            #   字段级锁 / 只读横幅 / 忙碌按钮等共享小件）
 ├── pages_*.py               # 每个工作区一个 mixin（被 MainWindow 多继承）
 └── widgets/
     ├── card.py              # 统一卡片框架：5 种 variant + set_locked
@@ -141,6 +143,12 @@ def _flush_changed():
 ```
 
 > 150ms 合并：连续改 5 个字段只触发 1 次 compute + save，避免写盘抖动。
+
+**状态栏提示的驻留期**：`_set_status(text, ok, background=False)` 会给刚设的提示
+记一个「驻留截止时间」（成功 3s / 失败 6s，见 `STATUS_HOLD_MS*` 常量）。自动保存
+触发的 `_set_status(..., background=True)` 在驻留期内**不覆盖**状态栏 —— 否则用户
+刚看到“已按 XX 拉取最低工资”，150 ms 后就被“已保存 12:34:56”顶掉。
+用户主动点「保存」时走 `_manual_save`，它会无视驻留期给出回执。
 
 ### 6. Excel 样式单一来源
 
