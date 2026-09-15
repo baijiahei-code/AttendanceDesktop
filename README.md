@@ -1,4 +1,4 @@
-# 工资考勤表（Attendance Desktop）
+# 工作考勤表（Attendance Desktop）
 
 一款完全离线的 **月度考勤 + 工资核算** 桌面工具（Python / PySide6，Windows）。
 按月记录出勤与工资项，自动核算加班费、社保 / 公积金、请假扣款、应发 / 实发、
