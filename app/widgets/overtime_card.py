@@ -5,7 +5,7 @@
 * 固定加班工资 spin
 * 三档小时数 spin（各带倍率徽章）
 * 加班费基数 spin + 锁按钮
-* 三档金额 + 加班小计
+* 三档金额 + 加班小计（= 固定加班工资 + 三档加班工资）
 
 公开 signals / attrs：
 * :attr:`spins`：所有 NumberSpin 的字典（外部按 attr 读写 book）
@@ -85,9 +85,10 @@ class OvertimeCardWidget(QFrame):
         ob_hint.setWordWrap(True)
         cl.addWidget(ob_hint)
 
-        # —— 加班小计 ──
+        # —— 加班小计（含固定加班工资）──
         self._total = QLabel("加班工资小计 ¥ 0.00")
         self._total.setObjectName("piTotal")
+        self._total.setToolTip("加班工资小计 = 固定加班工资 + 工作日/休息日/法定节假日加班工资")
         cl.addWidget(self._total)
 
     # ---------------------------------------------------------------------
@@ -139,7 +140,13 @@ class OvertimeCardWidget(QFrame):
 
     def sync(self, r, b: model.MonthBook | None = None,
              auto_write_hours: bool = False):
-        """根据结果刷新三档金额与加班小计。"""
+        """根据结果刷新三档金额与加班小计。
+
+        小计 = **固定加班工资 + 三档加班工资**（与报表「工资核算（应发）」的四行
+        同口径）。注意 ``r.overtime_wage_total`` 只含三档（calc 里它是应发工资
+        的构成项之一，固定加班工资由 calc 单独累加，不能并进去，否则重复计），
+        所以固定部分在这里由 book 补上。
+        """
         if r is None:
             return
         self._ot_vals["workday"].setText(
@@ -148,7 +155,9 @@ class OvertimeCardWidget(QFrame):
             config.MONEY_FMT.format(r.overtime_wage_restday))
         self._ot_vals["holiday"].setText(
             config.MONEY_FMT.format(r.overtime_wage_holiday))
-        self._total.setText(f"加班工资小计 ¥ {r.overtime_wage_total:,.2f}")
+        fixed = float(getattr(b, "fixed_overtime_wage", 0.0) or 0.0) if b is not None else 0.0
+        self._total.setText(
+            f"加班工资小计 ¥ {r.overtime_wage_total + fixed:,.2f}")
 
         # 自动模式下回写到对应的 spin（保持所见即所得）
         if auto_write_hours and b is not None:
