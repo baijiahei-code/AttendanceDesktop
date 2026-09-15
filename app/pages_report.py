@@ -262,7 +262,7 @@ def _write_report_xlsx(path: str, r, b):
     # ---- 标题 + 备注（合并 A:C） ----
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOL)
     t = ws.cell(row=1, column=1,
-                value=f"工资考勤表 · {b.year} 年 {b.month} 月 核算报表")
+                value=f"工作考勤表 · {b.year} 年 {b.month} 月 核算报表")
     t.font = TITLE_FONT
     t.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 30

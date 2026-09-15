@@ -47,7 +47,7 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         self._change_timer.setInterval(150)
         self._change_timer.timeout.connect(self._flush_changed)
 
-        self.setWindowTitle("工资考勤表")
+        self.setWindowTitle("工作考勤表")
         # 窗口尺寸按屏幕可用区域自适应：过大窗口在小屏上会把右列卡片裁切/挤压
         app0 = QApplication.instance()
         geo = app0.primaryScreen().availableGeometry() if app0 is not None else None
@@ -97,7 +97,7 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         v.setContentsMargins(16, 20, 16, 14)
         v.setSpacing(6)
 
-        brand = QLabel("📋 工资考勤表")
+        brand = QLabel("📋 工作考勤表")
         brand.setObjectName("brand")
         sub = QLabel("月度考勤 · 工资核算")
         sub.setObjectName("brandSub")
@@ -780,8 +780,8 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
     def _show_about(self):
         """关于 / 免责声明。"""
         QMessageBox.about(
-            self, "关于 · 工资考勤表",
-            "<h3>工资考勤表（Attendance Desktop）</h3>"
+            self, "关于 · 工作考勤表",
+            "<h3>工作考勤表（Attendance Desktop）</h3>"
             "<p>本地离线 · 月度考勤与工资核算工具（Python / PySide6）</p>"
             "<p>开源许可：<b>GNU General Public License v3.0</b></p>"
             "<hr>"

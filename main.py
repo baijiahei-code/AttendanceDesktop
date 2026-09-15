@@ -1,4 +1,4 @@
-"""工资考勤表 · Python 桌面版入口。"""
+"""工作考勤表 · Python 桌面版入口。"""
 import os
 import sys
 
@@ -25,7 +25,7 @@ def _icon_path() -> str:
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("工资考勤表")
+    app.setApplicationName("工作考勤表")
     icon_file = _icon_path()
     if os.path.exists(icon_file):
         app.setWindowIcon(QIcon(icon_file))
