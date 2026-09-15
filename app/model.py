@@ -190,7 +190,7 @@ class MonthBook:
     min_wage: float = 2170.0             # 本地最低工资标准（元/月）
     parttime_min: float = 22.0           # 非全日制最低工资标准（元/时）
     agreed_work_days: float = 26.0       # 约定工作天数（与员工约定，不影响计薪天数 21.75）
-    hours_per_day: float = 8.0
+    hours_per_day: float = 8.0          # 24 小时内工时（第 N 次下班 → 第 N+1 次上班结束，正常周期=24h）
     overtime_base: float = 0.0           # 加班费计算基数（默认跟随 min_wage）
 
     # —— 加班 / 个税 / 个人扣项 ——

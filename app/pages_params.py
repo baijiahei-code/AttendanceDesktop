@@ -417,8 +417,15 @@ class ParamsPageMixin:
         card.add_layout(box)
 
         # —— 其余字段（始终可编辑）——
-        self._add_spin_field(card, "hours_per_day", "每日工时",
-                             decimals=2, step=0.5, suffix="小时")
+        # 「24 小时内工时」= 第 N 次下班 → 第 N+1 次上班结束这一个周期内实际工作的小时数
+        #（Excel B17；正常一个周期就是 24 小时，排班异常时就不是 24 小时）
+        note_24h = ("备注：第 N 次下班 → 第 N+1 次上班结束的 24 小时"
+                    "（一个周期应为 24 小时；不是 24 小时说明排班有问题）")
+        hp = self._add_spin_field(card, "hours_per_day", "24小时内工时",
+                                  decimals=2, step=0.5, suffix="小时", tip=note_24h)
+        hp.setToolTip("24 小时内工时：第 N 次下班到第 N+1 次上班结束这 24 小时里"
+                      "实际工作的小时数\n正常一个周期就是 24 小时；"
+                      "不是 24 小时说明排班有问题")
 
         # 初始化：如果已有 min_wage 且 overtime_base 仍锁定，同步一下
         if self._ot_base_locked and self._min_wage_spin is not None:

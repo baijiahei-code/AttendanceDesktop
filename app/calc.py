@@ -72,8 +72,12 @@ class Result:
     ot_hours_restday: float = 0.0
     ot_hours_holiday: float = 0.0
     company_subsidies_included: float = 0.0
-    in_wage_part: float = 0.0              # B24
-    not_in_wage_part: float = 0.0          # B25
+    in_wage_part: float = 0.0              # B34（计入最低工资标准的工资）
+    not_in_wage_part: float = 0.0          # B35（不计入最低工资标准的工资）
+    # 「计入工资扣除部分 / 不计入工资扣除部分（已经扣除部分）」口径（Excel B24/B25）
+    # 与上面 B34/B35 是同一笔应发工资的两种拆分，两者相加都等于 gross_wage
+    deduct_part_in: float = 0.0            # B24
+    deduct_part_out: float = 0.0           # B25
     gross_wage: float = 0.0                # B23
     # 个人扣除
     personal_social: float = 0.0           # D23
@@ -181,6 +185,17 @@ def compute(book: model.MonthBook) -> Result:
                                  + r.company_subsidies_included + s.fixed_overtime_wage
                                  + r.overtime_wage_total)
     r.gross_wage = _round2(r.in_wage_part + r.not_in_wage_part)
+
+    # 「计入工资扣除部分 / 不计入工资扣除部分（已经扣除部分）」（Excel B24/B25）
+    #   B24 = SUM(D9:AH9, E18:AH18, G20)
+    #       → 工资类 + 公司补贴（不含官方社保补贴）+ 固定加班工资
+    #   B25 = SUM(D12:AH12, D15:AH15, D18, D20:F20)
+    #       → 按出勤津贴 + 固定津贴 + 官方社保补贴 + 三档加班工资
+    # 与 B34/B35 是同一总额的另一种分法：两项相加 = gross_wage（应发工资合计）。
+    r.deduct_part_in = _round2(r.in_wage_part + r.company_subsidies_included
+                               + s.fixed_overtime_wage)
+    r.deduct_part_out = _round2(r.not_in_wage_part - r.company_subsidies_included
+                                - s.fixed_overtime_wage)
 
     # 个人扣除
     r.personal_social = _round2(s.personal_social_rate * s.social_base)
@@ -311,9 +326,11 @@ def _build_groups(book: model.MonthBook, r: Result) -> list:
     ]})
 
     g.append({"title": "工时核算", "lines": [
+        # 月计薪天数 = 国家规定的 21.75（固定值，不可改；加班时薪/日薪折算用）
+        _line("月计薪天数", value=PAYABLE_DAYS, unit="天", kind="i"),
         _line("约定工作天数", value=book.agreed_work_days, unit="天", kind="i"),
         _line("提供正常劳动天数", value=c.normal_labor_days, unit="天", bold=True),
-        _line("缺勤天数（约定 − 实出勤）", value=c.diff_agreed_normal_labor, unit="天"),
+        _line("缺勤天数（约定工作天数 − 提供正常劳动天数）", value=c.diff_agreed_normal_labor, unit="天"),
         _line("工作日加班时长", value=r.ot_hours_workday, unit="小时"),
         _line("休息日加班时长", value=r.ot_hours_restday, unit="小时"),
         _line("法定节假日加班时长", value=r.ot_hours_holiday, unit="小时"),
@@ -330,6 +347,9 @@ def _build_groups(book: model.MonthBook, r: Result) -> list:
         _line("固定加班工资", value=book.fixed_overtime_wage),
         _line("计入最低工资标准的工资", value=r.in_wage_part),
         _line("不计入最低工资标准的工资", value=r.not_in_wage_part),
+        # 与上面两行是同一笔应发工资的另一种拆分（Excel B24/B25 的位置）
+        _line("计入工资扣除部分", value=r.deduct_part_in),
+        _line("不计入工资扣除部分/已经扣除部分", value=r.deduct_part_out),
         _line("应发工资合计", value=r.gross_wage, bold=True),
     ]})
 

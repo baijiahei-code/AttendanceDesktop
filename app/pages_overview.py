@@ -103,6 +103,7 @@ class OverviewPageMixin:
             work_time_parts.append(
                 f"{r.daily_ot_over3_days} 天单日加班>{calc.MAX_DAILY_OVERTIME_H:g}h")
         else:
+            # 合规：没有任何一天加班 >3h（判定口径见 calc.MAX_DAILY_OVERTIME_H）
             work_time_parts.append(f"单日加班≤{calc.MAX_DAILY_OVERTIME_H:g}h")
         work_time_detail = " · ".join(work_time_parts)
 
