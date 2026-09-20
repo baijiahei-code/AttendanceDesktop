@@ -1,7 +1,7 @@
 # 工作考勤表（Attendance Desktop）
 
 一款完全离线的 **月度考勤 + 工资核算** 桌面工具（Python / PySide6，支持
-**Windows** 与**信创 Linux**：麒麟、统信 UOS、Deepin）。
+**Windows** 与 **Linux**）。
 按月记录出勤与工资项，自动核算加班费、社保 / 公积金、请假扣款、应发 / 实发、
 **最低工资与工时合规判定**，把每月「填表 + 算工资」从 Excel 公式里解放出来。
 
@@ -20,8 +20,13 @@
 ## 环境要求
 
 - **Python 3.10+**（开发 / 打包机，实测 3.14）
-- **操作系统**：Windows 10+ 或信创 Linux 桌面（麒麟、统信 UOS、Deepin）
+- **操作系统**：Windows 10+；Linux **x86_64 且 glibc ≥ 2.38**（预编译 deb，实测基线）
 - 打 Windows 安装程序需额外安装 **Inno Setup 6**；打 deb 需 Debian 系（`dpkg-deb`）
+
+> ⚠️ **Linux 版系统要求（重要）**：预编译的 deb 适用于 **x86_64、glibc ≥ 2.38** 的系统
+> （已验证 Deepin 25、openEuler 24.03+）。**麒麟 V10（glibc 2.23）、麒麟 V10 SP1（2.31）、
+> 统信 UOS 20（约 2.28）等既有信创版本无法直接安装**，原因与解法见下文「deb 打包」的
+> glibc 基线说明。安装前请自查：`getconf GNU_LIBC_VERSION && uname -m`
 
 > 敏感设置（API 凭据）的加密方式随平台而异：Windows 用 DPAPI，其它平台用国密
 > SM2 + SM4 + HMAC-SM3（见 `app/crypto.py`、`app/gm.py`，细节见下文「敏感字段加密」）。
@@ -37,7 +42,7 @@ python -m venv .venv
 .\\.venv\\Scripts\\python.exe scripts\\smoke_test.py   # 离屏冒烟测试（QT_QPA_PLATFORM=offscreen）
 ```
 
-**Linux / 信创桌面（Deepin、统信 UOS、麒麟）**：
+**Linux（需 glibc ≥ 2.34 —— PySide6 6.11 的 wheel 标签，比预编译 deb 的要求低）**：
 
 ```bash
 bash scripts/setup_linux.sh       # 建 venv + 装依赖 + 跑国密自证
@@ -131,10 +136,19 @@ sudo dpkg -r attendance-desktop      # 卸载（保留用户数据）
 安装内容：`/usr/lib/attendance-desktop/`（程序本体）、`/usr/bin/attendance-desktop`
 （启动器，默认设 `QT_QPA_PLATFORM=xcb`）、`.desktop` 入口与 hicolor 图标。
 
-> ⚠ **glibc 基线**：deb 能装到哪些系统由**构建机**的 glibc 决定。在 glibc 2.38
-> （Deepin 25）上构建的包**装不进**麒麟 V10 SP1(2.31) / UOS 20(2.28)；
-> 要覆盖旧基线需在对应容器内构建（麒麟→`python:3.11-slim-bullseye`，
-> UOS 20→`python:3.11-slim-buster`）。`scripts/pack_deb.py` 构建时会主动告警。
+> ⚠️ **glibc 基线（实测）**：deb 能装到哪些系统，由**构建机的 glibc** 决定 —— PyInstaller 会把
+> 构建机的 `libpython`、`libstdc++`、GTK/GLib 等库一并收进包内，这些库的符号版本就是下限。
+> 在 **Deepin 25（glibc 2.38）** 上构建的包实测要求 **GLIBC_2.38**、`Architecture: amd64`，
+> 因此**装不进**麒麟 V10(2.23) / 麒麟 V10 SP1(2.31) / UOS 20(约 2.28)；可用的是
+> **openEuler 24.03+、Deepin 23+** 等较新基线系统。
+>
+> 要覆盖旧基线必须**同时改两件事**：
+> 1. 在低 glibc 容器内构建（`python:3.11-slim-bullseye` = 2.31、`python:3.11-slim-buster` = 2.28）；
+> 2. **把 PySide6 降到 ≤ 6.7** —— PySide6 6.11 的 wheel 标签是 `manylinux_2_34`，
+>    在 2.31 / 2.28 的容器里**根本装不上**，只换构建环境是无效的。
+>
+> 而麒麟 V10 的 glibc 2.23 低于 Qt6 全家（≥ 2.28）的下限，需换 Qt5 技术栈才可能支持。
+> 目标机自查：`getconf GNU_LIBC_VERSION` 或 `ldd --version | head -1`。
 >
 > 包内文件属主由 `dpkg-deb --root-owner-group` 固定为 root，**不需要 fakeroot**。
 

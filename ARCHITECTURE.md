@@ -170,7 +170,7 @@ from .excel_style import HEADER_FILL, BODY_FONT, MONEY_FMT, ...
 
 ## 跨平台与加密层
 
-同一份代码要跑 Windows 与信创 Linux，平台差异集中在下列几处，其余模块不感知平台。
+同一份代码要跑 Windows 与 Linux，平台差异集中在下列几处，其余模块不感知平台。
 
 ### 分层
 
@@ -242,6 +242,52 @@ ek       = SM2-公钥加密(k_master)            # 密文顺序 C1C3C2
 SM4 的 GB/T 32907 A.1 向量、SM3-KDF、HMAC-SM3、**与 OpenSSL 的 SM3/HMAC-SM3 逐字节对拍**、
 SM2 往返与签名负向用例、私钥范围、随机数源加固 —— 需要“使用国密算法”的可复现证据时用它，
 不靠口头声明。
+
+### Linux 兼容性基线（glibc）
+
+PyInstaller **不能交叉编译**，而且会把构建机的 `libpython`、`libstdc++`、GTK/GLib 等
+动态库一并收进包内 —— 这些库的**符号版本**就是产物的安装下限。也就是说，一个 deb
+「能装到哪些系统」由**构建机**决定，与项目代码无关。
+
+实测（2026-09-20，构建机 Deepin 25 / glibc 2.38）：
+
+| 项目 | 值 |
+| --- | --- |
+| 产物最高 GLIBC 符号 | `GLIBC_2.38`（24 个文件引用；另有 2.36×4、2.35×5、2.34×34） |
+| 产物最高 GLIBCXX 符号 | `GLIBCXX_3.4.32` |
+| `Architecture` | `amd64`（仅 x86_64） |
+
+各系统基线对照（麒麟取自其官方源 `dists/<代号>/main/binary-amd64/Packages.gz` 里
+`libc6` 的版本；Deepin / openEuler / Ubuntu 取自 DistroWatch）：
+
+| 系统 | glibc | 能否安装本包 |
+| --- | --- | --- |
+| 银河麒麟 V10 | 2.23 | ❌ |
+| 银河麒麟 4.0.2 SP3 | 2.23 | ❌ |
+| 银河麒麟 V10 SP1 | 2.31 | ❌ |
+| 统信 UOS 20 | ≈ 2.28（公开资料；源需授权，未实测） | ❌ |
+| Ubuntu 20.04 / 22.04 | 2.31 / 2.35 | ❌ |
+| Deepin 20.9 | 2.28 | ❌ |
+| openEuler 24.03-SP3 / 25.09 | 2.38 | ✅ |
+| Deepin 23.1 / 25.2 | 2.38 | ✅ |
+
+**要覆盖旧基线，必须同时做两件事**（缺一不可）：
+
+1. **在低 glibc 容器内构建**：`python:3.11-slim-bullseye`（glibc 2.31）、
+   `python:3.11-slim-buster`（glibc 2.28）；
+2. **把 PySide6 降到 ≤ 6.7** —— PySide6 6.11 的 wheel 标签是 `manylinux_2_34`，
+   在 2.31 / 2.28 的容器里连 `pip install` 都过不去，只换构建环境是无效的：
+
+   | 框架 | wheel 标签 | 最低 glibc |
+   | --- | --- | --- |
+   | PySide6 6.11.2（当前） | `manylinux_2_34` | 2.34 |
+   | PySide6 6.7.0 / 6.5.0 | `manylinux_2_28` | 2.28 |
+   | PyQt6 6.7.0 | `manylinux_2_28` | 2.28 |
+   | PyQt5 5.15.11 | `manylinux_2_17` | 2.17 |
+
+麒麟 V10 的 glibc 2.23 低于 Qt6 全家（≥ 2.28）的下限 —— 要支持它只能换 Qt5 技术栈。
+
+目标机自查：`getconf GNU_LIBC_VERSION`、`ldd --version | head -1`、`uname -m`。
 
 ---
 

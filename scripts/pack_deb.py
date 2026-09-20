@@ -18,9 +18,14 @@
 * 版本号单一来源：从 ``installer.iss`` 的 ``AppVersion`` 读取，避免两处版本漂移。
 * 架构由 ``dpkg --print-architecture`` 自动探测（amd64 / arm64 / loong64 均适用）。
 * 用 ``dpkg-deb --build --root-owner-group`` 定属主为 root，**不需要 fakeroot**。
-* **glibc 基线由构建机决定**：在 glibc 2.38 的机器上构建出的包，无法安装到
-  glibc 2.31 的麒麟 V10 SP1 —— 要覆盖老基线系统，请在对应容器内构建
-  （麒麟 V10 SP1 → ``python:3.11-slim-bullseye``，UOS 20 → ``python:3.11-slim-buster``）。
+* **glibc 基线由构建机决定**：PyInstaller 会把构建机的 ``libpython`` / ``libstdc++`` /
+  GTK-GLib 等动态库一并收进包内，这些库的**符号版本**就是产物的安装下限。实测在
+  Deepin 25（glibc 2.38）上构建的包要求 ``GLIBC_2.38``，**装不进**麒麟 V10(2.23) /
+  V10 SP1(2.31) / UOS 20(≈2.28)；可用的是 openEuler 24.03+ / Deepin 23+。
+  要覆盖旧基线必须**同时**做两件事：① 在低 glibc 容器内构建（``python:3.11-slim-bullseye``
+  = 2.31、``python:3.11-slim-buster`` = 2.28）；② **把 PySide6 降到 ≤ 6.7** ——
+  PySide6 6.11 的 wheel 标签是 ``manylinux_2_34``，在 2.31/2.28 的容器里根本装不上。
+  麒麟 V10 的 2.23 低于 Qt6 全家（≥2.28）的下限，需换 Qt5 技术栈才可能支持。
 """
 from __future__ import annotations
 
