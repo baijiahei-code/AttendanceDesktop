@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""等价于 一键打包.bat 的 Python 构建驱动（可用于 CI / 验证打包流程）。
+"""Windows 版构建实现（免安装目录 + Inno Setup 安装程序）。
 
 使用前提：
-  * 在仓库根目录执行：python _pack_driver.py
+  * 在仓库根目录执行：python scripts/pack_windows.py
+    （一般不经直接调用，而是由统一入口 scripts/pack_all.py 分派）
   * 已建好 .venv 并 pip install -r requirements.txt（需含 pyinstaller）
   * 已安装 Inno Setup 6（默认自动探测，或用环境变量 ISCC 指定 ISCC.exe）
 
@@ -16,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent   # 项目根（本脚本位于 scripts/ 下）
 PUB = ROOT / "release"
 SPEC = ROOT / "AttendanceDesktop.spec"
 ISS = ROOT / "installer.iss"

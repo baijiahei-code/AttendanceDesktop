@@ -1,6 +1,17 @@
-"""新功能冒烟测试：节假日表 / 个税 / 逐日加班分桶 / 年度汇总页（临时脚本，跑完可删）。"""
+r"""冒烟 / 回归测试：节假日表、个税、逐日加班分桶、工资核算边界、序列化兼容、
+UI 离屏渲染、锁定月保护、国密加解密、存储读写。
+
+用法（仓库根目录）：.venv\Scripts\python.exe scripts\smoke_test.py
+                    （Linux：.venv/bin/python scripts/smoke_test.py）
+全部通过时退出码 0；任一断言失败抛 AssertionError。
+"""
 import os
+import sys
 import tempfile
+from pathlib import Path
+
+# 本脚本在 scripts/ 下，而 app/ 在项目根：注入项目根才能 import app.*
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 os.environ.setdefault("ATT_DATA_DIR", tempfile.mkdtemp())
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -44,10 +55,14 @@ for d in b.days:  # 模拟一键铺
 for d in b.days:
     if holidays.day_kind(2026, 2, d.day) == "statutory":
         d.mark = 1
-b.day(5).overtime_hours = 2.0    # 周四 → 工作日
-b.day(21).overtime_hours = 3.0   # 周六 → 休息日
-b.day(17).overtime_hours = 4.0   # 初一 → 法定节假日
-b.ot_auto = True
+# 逐日加班小时：只汇总成「月加班总时长」（合规判定），不参与加班工资计算
+b.day(5).overtime_hours = 2.0
+b.day(21).overtime_hours = 3.0
+b.day(17).overtime_hours = 4.0
+# 三档加班小时：由用户手填（不再有自动分桶模式）
+b.workday_ot_hours = 2.0
+b.restday_ot_hours = 3.0
+b.holiday_ot_hours = 4.0
 b.pay_items.append(model.PayItem(name="基本工资", type="wage", amount=10000))
 b.overtime_base = 10000
 b.social_base = 10000
@@ -71,6 +86,49 @@ taxable = r.gross_wage - 5000 - r.personal_social - r.personal_fund
 assert abs(r.income_tax - calc._monthly_tax(taxable)) < _WAGE_TOL
 assert r.counts.legal_holiday == 4
 print("calc OK")
+
+# ---- 请假折算边界：约定工作天数为 0 / 负数（回归：曾把「一天 = 全部应发」当日薪）----
+# 背景：原实现为 `agreed = s.agreed_work_days or 1.0`，把 0 悄悄换成 1.0 →
+#   leave_per_day = 全部应发，且 leave_deduction_hours 没有 `> 0` 保护，
+#   于是「有请假小时」就能扣出远超工资的金额（实测 8000 元 → 实发 -22000）。
+# 界面「约定工作天数」spin 未设 setRange（QDoubleSpinBox 默认 0 ~ 99.99），
+# 所以 0 是用户可实际填入的值，这条路径必须守住。
+b_z = model.create_book(2026, 9)
+b_z.agreed_work_days = 0.0
+b_z.pay_items = [model.PayItem(name="基本工资", type="wage", amount=8000)]
+for d in b_z.days:                 # 整月每天请假 1 小时
+    d.status = "事假"
+    d.leave_hours = 1.0
+r_z = calc.compute(b_z)
+assert r_z.daily_leave_hours == 30.0, r_z.daily_leave_hours
+assert r_z.after_deduction == 8000.0, r_z.after_deduction
+assert r_z.leave_per_day == 0.0, f"约定工作天数为 0 时不应算出日薪：{r_z.leave_per_day}"
+assert r_z.leave_per_hour == 0.0, f"约定工作天数为 0 时不应算出时薪：{r_z.leave_per_hour}"
+assert r_z.leave_deduction_days == 0.0, r_z.leave_deduction_days
+assert r_z.leave_deduction_hours == 0.0, f"扣款不得凭空放大：{r_z.leave_deduction_hours}"
+assert r_z.leave_deduction_total == 0.0, r_z.leave_deduction_total
+assert r_z.take_home == r_z.after_deduction, f"实发被侵蚀：{r_z.take_home}"
+
+# 负数同理（存档被手改 / 异常输入）：不能产出负日薪、更不能产出负扣款
+b_z.agreed_work_days = -5.0
+r_z2 = calc.compute(b_z)
+assert r_z2.leave_per_day == 0.0 and r_z2.leave_per_hour == 0.0, r_z2.leave_per_hour
+assert r_z2.leave_deduction_total == 0.0, r_z2.leave_deduction_total
+
+# 正常值不得被牵连（防「顺手把日薪一律清零」这类过度修复）
+# 口径：日薪 = 税后应发 / 约定工作天数；时薪固定按法定标准工作日 8h 折算
+#（与加班时薪基数 payable8 = 21.75 × 8 同口径，**不要**换成 hours_per_day）。
+b_n = model.create_book(2026, 9)
+b_n.agreed_work_days = 26.0
+b_n.pay_items = [model.PayItem(name="基本工资", type="wage", amount=8000)]
+for d in b_n.days:
+    d.status = "上班"
+    d.leave_hours = 0.5
+r_n = calc.compute(b_n)
+assert r_n.leave_per_day == round(r_n.after_deduction / 26.0, 2), r_n.leave_per_day
+assert r_n.leave_per_hour == round(r_n.after_deduction / 26.0 / 8.0, 2), r_n.leave_per_hour
+assert r_n.leave_deduction_hours > 0, "约定工作天数正常时应当照常扣款"
+print("calc leave-fold edge OK")
 
 # ---- 工资构成：最低工资判定口径 ----
 b_min = model.create_book(2026, 3)
@@ -96,9 +154,12 @@ print("min-wage classification OK")
 # ---- 序列化兼容 ----
 raw = b.to_dict()
 b2 = model.MonthBook.from_dict(raw)
-assert b2.ot_auto and b2.income_tax_auto and len(b2.pay_items) == 1
-b3 = model.MonthBook.from_dict({k: v for k, v in raw.items() if k not in ("ot_auto", "income_tax_auto")})
-assert not b3.ot_auto and not b3.income_tax_auto  # 旧档默认 False
+assert b2.income_tax_auto and len(b2.pay_items) == 1
+b3 = model.MonthBook.from_dict({k: v for k, v in raw.items() if k != "income_tax_auto"})
+assert not b3.income_tax_auto  # 旧档缺字段 → 保持 dataclass 默认值，不报错
+# 旧存档里可能残留已删除的 ot_auto 键：from_dict 必须忽略而不是报错
+b4 = model.MonthBook.from_dict({**raw, "ot_auto": True})
+assert not hasattr(b4, "ot_auto"), "ot_auto 字段应已移除"
 print("serialize OK")
 
 # ---- UI 离屏渲染 ----
@@ -113,7 +174,6 @@ win.resize(1280, 860)
 win.show()
 win.store.save(b)  # 让年度汇总有真实数据
 win._go(2026, 2)   # 切到春节月
-win._book.ot_auto = True
 win._book.income_tax_auto = True
 win._go(2026, 2)   # 重建页面：薪酬页应显示勾选态且手动框禁用
 win._show_page(2)  # 薪酬页（自动开关）
@@ -449,30 +509,107 @@ assert excel_style.MONEY_FMT == '#,##0.00;[Red]-#,##0.00;"—"'
 assert excel_style.BODY_FONT.name == "Microsoft YaHei"
 print("excel_style shared OK")
 
-# 10) DPAPI roundtrip + 旧版明文向后兼容
+# 10) 敏感字段加解密：国密（gm1）/ DPAPI / 旧版明文 三种形态
 import sys as _sys
-from app.storage import _dpapi_protect, _dpapi_unprotect, _SENSITIVE_KEYS  # noqa: E402
+import os as _os
+import io as _io
+import contextlib as _ctx
+import tempfile as _tf_sec
+from app import crypto as _crypto, gm as _gm  # noqa: E402
+from app.storage import _SENSITIVE_KEYS, MonthStore  # noqa: E402
+
 assert isinstance(_SENSITIVE_KEYS, tuple) and _SENSITIVE_KEYS, "敏感设置键集合应为非空元组"
 
-# 旧版明文（非 dpapi: 前缀）应当不动地返回
-assert _dpapi_unprotect("plain-text-token") == "plain-text-token"
-assert _dpapi_protect("") == ""
-print("dpapi legacy-passthrough OK")
 
-# 真正加密 - 解密 roundtrip（仅 Windows / 加密 API 可用时）
-if _sys.platform == "win32":
-    secret = "sk-test-1234567890 中文也能加密"
-    encrypted = _dpapi_protect(secret)
-    if encrypted.startswith("dpapi:"):
-        assert _dpapi_unprotect(encrypted) == secret
-        print("dpapi roundtrip OK")
+def _flip(text: str) -> str:
+    """翻转末位字符，用于制造被篡改的密文。"""
+    return text[:-1] + ("A" if text[-1] != "A" else "B")
+
+
+def _quiet_unprotect(token: str) -> str:
+    """期待失败路径时不把 traceback 打到测试输出里。"""
+    with _ctx.redirect_stderr(_io.StringIO()):
+        return _crypto.unprotect(token)
+
+
+# 密钥目录固定到临时目录：测试绝不能碰用户真实数据目录
+_sec_dir = _tf_sec.mkdtemp()
+_store_sec = MonthStore(_sec_dir)
+assert _crypto.key_path() == _os.path.join(_sec_dir, "keys", "sm2_private.hex"), _crypto.key_path()
+
+# 10.1 国密算法自证（标准测试向量 + OpenSSL 对拍）
+_rows = _gm.selftest()
+_bad = [n for n, o in _rows if not o]
+assert not _bad, f"国密自证失败：{_bad}"
+print(f"gm selftest OK ({len(_rows)} 项)")
+
+# 10.2 旧版明文 / 空值透传（老存档里的明文不得被改写）
+assert _crypto.unprotect("plain-text-token") == "plain-text-token"
+assert _crypto.protect("") == "" and _crypto.unprotect("") == ""
+print("legacy passthrough OK")
+
+# 10.3 强制国密后端（开发机是 Windows 也能覆盖信创路径）
+_prev_crypto = _os.environ.get("ATT_CRYPTO")
+_os.environ["ATT_CRYPTO"] = "gm"
+try:
+    assert _crypto.backend() == "gm"
+    secret = "sk-test-1234567890 中文密钥"
+    enc = _crypto.protect(secret)
+    assert enc.startswith("gm1:"), f"国密令牌前缀不对：{enc[:12]}"
+    assert secret not in enc, "密文里不应出现明文"
+    assert _crypto.unprotect(enc) == secret, "国密 roundtrip 失败"
+    assert _crypto.protect(secret) != enc, "两次加密结果相同 → 随机数失效"
+    _parts = enc[len("gm1:"):].split(".")
+    assert len(_parts) == 4, "gm1 令牌应为 4 段"
+    _tampered = "gm1:" + ".".join(_parts[:3] + [_flip(_parts[3])])
+    assert _quiet_unprotect(_tampered) == _tampered, "篡改密文必须原样返回，不得抛异常"
+    assert _quiet_unprotect("gm1:坏数据") == "gm1:坏数据"
+    assert _quiet_unprotect("gm1:a.b.c.d") == "gm1:a.b.c.d"
+    print("gm roundtrip + tamper-detect OK")
+
+    # settings 层透明加解密：敏感字段密文落盘、非敏感字段保持可读、读回一致
+    assert _store_sec.save_settings({"api_key": secret, "api_model": "some-model"})
+    _raw_text = open(_os.path.join(_sec_dir, "settings.json"), encoding="utf-8").read()
+    assert secret not in _raw_text, "敏感字段不得明文落盘"
+    assert "some-model" in _raw_text, "非敏感字段应保持明文可读"
+    assert _store_sec.load_settings()["api_key"] == secret, "解密回读不一致"
+    print("settings transparent-encrypt OK")
+finally:
+    if _prev_crypto is None:
+        _os.environ.pop("ATT_CRYPTO", None)
     else:
-        # Windows 但 ctypes 失败（少见）：fallback 返回原值也是预期路径
-        assert encrypted == secret
-        print("dpapi fallback (no ctypes) OK")
+        _os.environ["ATT_CRYPTO"] = _prev_crypto
+
+# 10.4 SM2 密钥文件：位置、内容、权限
+_kp = _crypto.key_path()
+assert _os.path.exists(_kp), f"密钥文件应已生成：{_kp}"
+_lines = [ln.strip() for ln in open(_kp, encoding="utf-8")
+          if ln.strip() and not ln.strip().startswith("#")]
+assert len(_lines) == 1 and _gm.sm2_is_valid_private(_lines[0]), "私钥文件内容非法"
+if _os.name == "posix":
+    _mode = _os.stat(_kp).st_mode & 0o777
+    assert _mode == 0o600, f"私钥权限应为 0600，实为 {oct(_mode)}"
+print("key file OK")
+
+# 10.5 Windows DPAPI roundtrip；非 Windows 必须容忍（而非崩溃）跨平台拷来的 dpapi: 值
+if _sys.platform == "win32":
+    _os.environ["ATT_CRYPTO"] = "dpapi"
+    try:
+        _dp_secret = "sk-dpapi-test 中文"
+        _dp_enc = _crypto.protect(_dp_secret)
+        if _dp_enc.startswith("dpapi:"):
+            assert _crypto.unprotect(_dp_enc) == _dp_secret
+            print("dpapi roundtrip OK")
+        else:
+            # Windows 但 ctypes 失败（少见）：fallback 返回原值也是预期路径
+            assert _dp_enc == _dp_secret
+            print("dpapi fallback (no ctypes) OK")
+    finally:
+        _os.environ.pop("ATT_CRYPTO", None)
 else:
-    print("dpapi skipped (non-Windows) OK")
-print("dpapi OK")
+    assert _quiet_unprotect("dpapi:AAAA") == "dpapi:AAAA"
+    print("non-Windows tolerates dpapi: token OK")
+print("crypto OK")
 
 # 11) MonthStore 持久化 + .bak 备份 + 列表 + 删除
 import tempfile as _tf2

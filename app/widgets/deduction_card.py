@@ -95,18 +95,6 @@ class DeductionCardWidget(QFrame):
     def spins(self) -> dict[str, NumberSpin]:
         return self._spins
 
-    @property
-    def total(self) -> QLabel:
-        return self._total
-
-    @property
-    def ps_social(self) -> QLabel:
-        return self._ps_social
-
-    @property
-    def ps_fund(self) -> QLabel:
-        return self._ps_fund
-
     def sync(self, r, b: model.MonthBook | None = None):
         """根据结果刷新自动金额与扣除合计。"""
         if r is None:

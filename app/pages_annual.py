@@ -17,6 +17,7 @@ from .excel_style import (
     BORDER, BOLD_FONT, BODY_FONT, BAD_FONT, OK_FONT,
     HEADER_FILL, HEADER_FONT, MONEY_FMT, INT_FMT, FLT_FMT,
 )
+from .ui import default_export_path
 from .widgets import Card
 
 _COLS = ["月份", "出勤(天)", "加班(小时)", "请假(小时)", "应发工资",
@@ -161,7 +162,7 @@ class AnnualPageMixin:
             rows, totals = self._annual_rows(year)
         default_name = f"年度汇总_{year}年.xlsx"
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出年度汇总", default_name, "Excel 工作簿 (*.xlsx)")
+            self, "导出年度汇总", default_export_path(default_name), "Excel 工作簿 (*.xlsx)")
         if not path:
             return
         if not path.lower().endswith(".xlsx"):

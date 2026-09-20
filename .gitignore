@@ -19,6 +19,7 @@ dist/
 
 # ===== 构建产物目录（本地产物，不入库） =====
 release/
+build_deb/
 
 # ===== IDE =====
 .vscode/
@@ -41,6 +42,7 @@ desktop.ini
 # ===== 测试 / 调试产物 =====
 _check_*.png
 _report_sample.xlsx
+_iscc_*.tmp
 _bat_run.log
 # 开发时临时脚本（如 _tmp_*.py），一律不入库
 _tmp_*

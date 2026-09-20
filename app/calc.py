@@ -47,65 +47,65 @@ class Counts:
     other: int = 0
     weekend: int = 0
     legal_holiday: int = 0
-    provided_normal_labor: int = 0
-    normal_labor_days: int = 0          # B15
-    diff_agreed_normal_labor: float = 0.0  # B16
+    provided_normal_labor: int = 0      # mark=2「其他视为提供正常劳动」的天数
+    normal_labor_days: int = 0          # B15 提供正常劳动天数（口径见 _count_attendance）
+    diff_agreed_normal_labor: float = 0.0  # B16 约定工作天数 − 提供正常劳动天数（未 clamp）
 
 
 @dataclass
 class Result:
     counts: Counts = field(default_factory=Counts)
     # 工时
-    total_daily_ot_hours: float = 0.0      # B46
-    monthly_work_hours: float = 0.0        # B47
-    daily_leave_hours: float = 0.0         # SUM(D7:AH7)
+    total_daily_ot_hours: float = 0.0      # B46 月加班总时长（逐日加班之和）
+    monthly_work_hours: float = 0.0        # B47 月工作总时长 = 上班天数 × 每日工时 + 加班
+    daily_leave_hours: float = 0.0         # SUM(D7:AH7) 当月请假小时合计
     # 工资链
-    wage_components_total: float = 0.0     # B34
-    perday_allowances_total: float = 0.0   # SUM(D12:AH12)
-    fixed_allowances_total: float = 0.0    # SUM(D15:AH15)
-    overtime_wage_total: float = 0.0
-    overtime_wage_workday: float = 0.0
-    overtime_wage_restday: float = 0.0
-    overtime_wage_holiday: float = 0.0
+    wage_components_total: float = 0.0     # B34 计入最低工资标准的工资（wage 型工资项）
+    perday_allowances_total: float = 0.0   # SUM(D12:AH12) 按出勤津贴（每日标准 × 上班天数）
+    fixed_allowances_total: float = 0.0    # SUM(D15:AH15) 固定津贴 / 一次性奖励
+    overtime_wage_total: float = 0.0       # 三档加班工资合计（不含固定加班工资）
+    overtime_wage_workday: float = 0.0     # 工作日加班 ×1.5
+    overtime_wage_restday: float = 0.0     # 休息日加班 ×2
+    overtime_wage_holiday: float = 0.0     # 法定节假日加班 ×3
     # 实际参与计算的加班小时（手动或按逐日自动汇总）
     ot_hours_workday: float = 0.0
     ot_hours_restday: float = 0.0
     ot_hours_holiday: float = 0.0
-    company_subsidies_included: float = 0.0
-    in_wage_part: float = 0.0              # B34（计入最低工资标准的工资）
-    not_in_wage_part: float = 0.0          # B35（不计入最低工资标准的工资）
+    company_subsidies_included: float = 0.0  # 公司补贴（subsidy 型）合计
+    in_wage_part: float = 0.0              # B34 计入最低工资标准的工资
+    not_in_wage_part: float = 0.0          # B35 不计入最低工资标准的工资
     # 「计入工资扣除部分 / 不计入工资扣除部分（已经扣除部分）」口径（Excel B24/B25）
     # 与上面 B34/B35 是同一笔应发工资的两种拆分，两者相加都等于 gross_wage
     deduct_part_in: float = 0.0            # B24
     deduct_part_out: float = 0.0           # B25
     gross_wage: float = 0.0                # B23
     # 个人扣除
-    personal_social: float = 0.0           # D23
-    big_disease: float = 0.0               # E23
-    personal_fund: float = 0.0             # F23
-    income_tax: float = 0.0                # G23
-    personal_deductions_total: float = 0.0
-    after_deduction: float = 0.0           # B26
+    personal_social: float = 0.0           # D23 个人社保 = 社保基数 × 个人比例
+    big_disease: float = 0.0               # E23 大病医疗补助（手工填写）
+    personal_fund: float = 0.0             # F23 个人公积金 = 公积金基数 × 个人比例
+    income_tax: float = 0.0                # G23 个人所得税（自动计算 或 手工覆盖）
+    personal_deductions_total: float = 0.0  # 个人扣除合计
+    after_deduction: float = 0.0           # B26 应发 − 个人扣除
     # 公司承担
-    company_social: float = 0.0            # D26
-    company_fund: float = 0.0              # F26
+    company_social: float = 0.0            # D26 公司社保 = 社保基数 × 公司比例
+    company_fund: float = 0.0              # F26 公司公积金 = 公积金基数 × 公司比例
     # 请假扣款
-    leave_deduction_days: float = 0.0      # B28
-    leave_deduction_hours: float = 0.0     # B29
-    leave_deduction_total: float = 0.0     # B27
-    leave_per_day: float = 0.0             # B31
-    leave_per_hour: float = 0.0            # B32
-    # 加班
-    overtime_daily_wage: float = 0.0       # B20
-    overtime_hourly_wage: float = 0.0      # B21
+    leave_deduction_days: float = 0.0      # B28 缺勤天数扣款
+    leave_deduction_hours: float = 0.0     # B29 请假小时扣款
+    leave_deduction_total: float = 0.0     # B27 请假扣款小计
+    leave_per_day: float = 0.0             # B31 日薪 = (应发 − 个人扣除) ÷ 约定工作天数
+    leave_per_hour: float = 0.0            # B32 时薪 = 日薪 ÷ 8（8 = 法定标准工作日）
+    # 加班折算单价
+    overtime_daily_wage: float = 0.0       # B20 加班日薪 = 加班基数 ÷ 21.75
+    overtime_hourly_wage: float = 0.0      # B21 加班时薪 = 加班基数 ÷ (21.75 × 8)
     # 实发
-    take_home: float = 0.0                 # B37
-    take_home_hourly: float = 0.0          # B38
-    company_hourly_cost: float = 0.0       # B40
-    # 合规
-    min_wage_status: str = ""
-    work_time_legality: str = ""
-    company_cost_status: str = ""
+    take_home: float = 0.0                 # B37 实发 = 应发 − 个人扣除 − 请假扣款
+    take_home_hourly: float = 0.0          # B38 到手小时工资（÷ 月工作总时长）
+    company_hourly_cost: float = 0.0       # B40 公司每小时成本（含公司社保 / 公积金）
+    # 合规结论
+    min_wage_status: str = ""              # 与月最低工资标准的比较结论
+    work_time_legality: str = ""           # "违法" / "不违法"
+    company_cost_status: str = ""          # 与非全日制小时最低工资的比较结论
     # 工时合规明细（违法时 UI / 报表可以逐条展示）
     work_time_issues: list = field(default_factory=list)  # [str,...]
     daily_ot_over3_days: int = 0                            # 单日加班超 3h 的天数
@@ -128,6 +128,22 @@ def _monthly_tax(taxable: float) -> float:
 
 
 def compute(book: model.MonthBook) -> Result:
+    """核算一个月的工资与合规结果（**纯函数**：只读 book，不修改入参）。
+
+    计算顺序（后者依赖前者）：
+        出勤统计 → 工时与加班分类 → 工资项归并 → 加班工资 → 应发（gross_wage）
+        → 个人扣除 / 公司承担 → 请假扣款 → 实发 → 合规判定 → 报表分组
+
+    口径与规整规则：
+        * 金额字段一律过 `_round2`（Decimal + ROUND_HALF_UP），存储值与 UI 显示
+          （:,.2f）完全一致；中间步骤也规整，因此子项相加与「直接算」之间
+          可能有 ±0.05 元的累积差。
+        * 月计薪天数固定 `PAYABLE_DAYS` = 21.75；加班时薪 = 基数 ÷ (21.75 × 8)。
+        * 「提供正常劳动天数」与缺勤天数的口径见 `_count_attendance`。
+        * 三档加班小时取 `book` 上的**手填值**（薪酬页填写），不按考勤自动推算；
+          逐日的 `overtime_hours` 只汇总成「月加班总时长」，用于合规判定。
+        * 约定工作天数 ≤ 0 时不折算日薪 / 时薪（见下方「请假扣款」段）。
+    """
     s = book
     counts = _count_attendance(book)
     r = Result(counts=counts)
@@ -136,21 +152,14 @@ def compute(book: model.MonthBook) -> Result:
     total_ot = 0.0
     total_leave = 0.0
     over3_days: list[int] = []           # 单日加班 > 3h 的日号列表（留着算明细）
-    wd = rd = hd = 0.0  # 加班小时分类：工作日/休息日/法定节假日
-    ot_auto = bool(s.ot_auto)
+    # 逐日加班只用于汇总「月加班总时长」（合规判定）；三档加班工资用薪酬页的手填值，
+    # 不在这里分桶。
     for d in book.days:
         h = float(d.overtime_hours or 0.0)
         total_ot += h
         total_leave += float(d.leave_hours or 0.0)
         if h > MAX_DAILY_OVERTIME_H:
             over3_days.append(d.day)
-        if ot_auto and h > 0:
-            if d.mark == 1:
-                hd += h
-            elif d.is_weekend_dt(book.year, book.month):
-                rd += h
-            else:
-                wd += h
     r.total_daily_ot_hours = _f(total_ot)
     r.daily_leave_hours = _f(total_leave)
     r.monthly_work_hours = _f(counts.work * s.hours_per_day + r.total_daily_ot_hours)
@@ -167,12 +176,10 @@ def compute(book: model.MonthBook) -> Result:
     payable8 = PAYABLE_DAYS * 8.0
     r.overtime_hourly_wage = _round2(s.overtime_base / payable8 if payable8 else 0.0)
     r.overtime_daily_wage = _round2(s.overtime_base / PAYABLE_DAYS)
-    if ot_auto:
-        r.ot_hours_workday, r.ot_hours_restday, r.ot_hours_holiday = _f(wd), _f(rd), _f(hd)
-    else:
-        r.ot_hours_workday = _f(s.workday_ot_hours)
-        r.ot_hours_restday = _f(s.restday_ot_hours)
-        r.ot_hours_holiday = _f(s.holiday_ot_hours)
+    # 三档加班小时：用户在薪酬页手填，不按考勤自动推算
+    r.ot_hours_workday = _f(s.workday_ot_hours)
+    r.ot_hours_restday = _f(s.restday_ot_hours)
+    r.ot_hours_holiday = _f(s.holiday_ot_hours)
     r.overtime_wage_workday = _round2(1.5 * r.ot_hours_workday * r.overtime_hourly_wage)
     r.overtime_wage_restday = _round2(2.0 * r.ot_hours_restday * r.overtime_hourly_wage)
     r.overtime_wage_holiday = _round2(3.0 * r.ot_hours_holiday * r.overtime_hourly_wage)
@@ -211,9 +218,16 @@ def compute(book: model.MonthBook) -> Result:
     r.company_fund = _round2(s.company_fund_rate * s.fund_base)
 
     # 请假扣款
-    agreed = s.agreed_work_days or 1.0
-    r.leave_per_day = _round2(r.after_deduction / agreed if agreed else 0.0)
-    r.leave_per_hour = _round2(r.after_deduction / agreed / 8.0 if agreed else 0.0)
+    # 约定工作天数缺失或为 0 时，日薪 / 时薪无从计算 —— 一律按 0 计（宁可少扣也不错扣）。
+    # 不能退化成「除以 1.0」：那等于把「一天 = 全部应发」当成日薪，
+    # 只要当天有请假小时，扣款就能超过整月工资。
+    agreed = _f(s.agreed_work_days)
+    if agreed > 0:
+        r.leave_per_day = _round2(r.after_deduction / agreed)
+        r.leave_per_hour = _round2(r.after_deduction / agreed / 8.0)
+    else:
+        r.leave_per_day = 0.0
+        r.leave_per_hour = 0.0
     r.leave_deduction_days = _round2(counts.diff_agreed_normal_labor * r.leave_per_day
                                      if counts.diff_agreed_normal_labor > 0 else 0.0)
     r.leave_deduction_hours = _round2(r.daily_leave_hours * r.leave_per_hour)
@@ -281,6 +295,14 @@ _STATUS_COUNT_FIELDS = {
 
 
 def _count_attendance(book: model.MonthBook) -> Counts:
+    """按考勤状态 / 标记汇总天数（对应 Excel 的 B15 / B16 口径）。
+
+    * 各状态天数按 `_STATUS_COUNT_FIELDS` 累加（键与 `model.STATUS_LABELS` 对应）
+    * `normal_labor_days`（提供正常劳动天数）= 上班 + 婚假 + 丧假 + 产假 + 年假
+      + 法定节假日 + 其他视为提供正常劳动
+    * `diff_agreed_normal_labor` = 约定工作天数 − 提供正常劳动天数，**不 clamp**：
+      为负表示出勤超出约定，下游按 `> 0` 判断是否要按天扣款
+    """
     c = Counts()
     mapping = _STATUS_COUNT_FIELDS
     for d in book.days:
@@ -307,6 +329,11 @@ def _line(label: str, *, value: float | None = None, unit: str = "元",
 
 
 def _build_groups(book: model.MonthBook, r: Result) -> list:
+    """把核算结果整理成报表分组（标题 + 行），供报表页与 Excel 导出共用。
+
+    每行由 `_line()` 构造：`kind` 取 n（普通）/ i（只读灰字）/ ok（合规）/
+    bad（违规），`bold` 表示加粗小计行。
+    """
     c = r.counts
     g = []
 

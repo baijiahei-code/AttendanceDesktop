@@ -36,7 +36,9 @@ def main() -> int:
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.critical(
             None, "启动失败",
-            f"无法创建数据目录：{ex}\n\n请检查环境变量 ATT_DATA_DIR 或 %LOCALAPPDATA% 的权限。")
+            f"无法创建数据目录：{ex}\n\n"
+            "请检查环境变量 ATT_DATA_DIR，或用户数据目录（Windows 为 %LOCALAPPDATA%，"
+            "其它平台为 $XDG_DATA_HOME）的权限。")
         return 1
     win = MainWindow(store)
     win.show()

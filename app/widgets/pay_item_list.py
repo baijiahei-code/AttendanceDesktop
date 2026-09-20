@@ -241,9 +241,6 @@ class PayItemListWidget(QFrame):
         widget 自己只管 UI；数据同步交给 owner，避免遗漏 book.pay_items。"""
         self._on_remove_callback = cb
 
-    def reopen_menu(self):
-        """供外部在添加后重新弹起菜单（暂未使用，保留作扩展）。"""
-        self._open_catalog()
 
     # ---------------------------------------------------------------------
     # 锁定模式（页面级联动）：禁用所有"修改类"控件

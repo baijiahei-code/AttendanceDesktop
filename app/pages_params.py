@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import calc, wages, worker
+from .storage import secure_path
 from .ui import (LOCKED_INPUT_QSS, NumberSpin, make_lock_banner, make_lock_button,
                  set_busy_button, set_field_locked, set_fields_locked,
                  set_lock_button_state, show_lock_banner)
@@ -853,6 +854,7 @@ class ParamsPageMixin:
             os.makedirs(self.store.dir, exist_ok=True)
             with open(self._tpl_path(), "w", encoding="utf-8") as f:
                 json.dump({"templates": tpls}, f, ensure_ascii=False, indent=2)
+            secure_path(self._tpl_path(), 0o600)   # 与其它数据文件同级收紧
             return True
         except Exception:
             traceback.print_exc()

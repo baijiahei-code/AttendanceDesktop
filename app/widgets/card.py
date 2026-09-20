@@ -211,9 +211,6 @@ class Card(QFrame):
         for w in self._tracked:
             self._apply_lock_to(w, self._locked)
 
-    def is_locked(self) -> bool:
-        return self._locked
-
     def iter_tracked_widgets(self):
         """迭代所有被本卡片追踪的可交互 widget。
 

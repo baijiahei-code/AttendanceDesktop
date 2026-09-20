@@ -17,6 +17,7 @@ from .excel_style import (
     TITLE_FONT, SECTION_FILL, GROUP_FILL,
     OK_FILL, BAD_FILL, MONEY_FMT, INT_FMT, FLT_FMT,
 )
+from .ui import default_export_path
 from .widgets import Card
 
 
@@ -211,7 +212,7 @@ class ReportPageMixin:
         r = self._last_result
         default_name = f"工资考勤报表_{b.year}年{b.month}月.xlsx"
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出报表", default_name, "Excel 工作簿 (*.xlsx)")
+            self, "导出报表", default_export_path(default_name), "Excel 工作簿 (*.xlsx)")
         if not path:
             return
         if not path.lower().endswith(".xlsx"):

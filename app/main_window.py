@@ -1,12 +1,14 @@
 """PySide6 主窗口（浅色白底侧栏 + 靛紫→天青品牌 + 工资项列表化）。"""
 from __future__ import annotations
 
+import html
 import os
 import time
 import traceback
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup,
     QFrame, QGridLayout, QHBoxLayout, QLabel,
@@ -14,7 +16,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QSpinBox, QStackedWidget, QVBoxLayout, QWidget, QSizePolicy,
 )
 
-from . import calc, model, worker
+from . import calc, crypto, model, worker
 from .storage import MonthStore
 from .style import STYLE
 from .ui import PAGES, PAGE_TITLES
@@ -777,19 +779,70 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
             traceback.print_exc()
             return False
 
+    # ==================== 数据目录（入口只在「关于」对话框） ====================
+
+    def data_dir(self) -> str:
+        """当前数据目录的绝对路径（供「关于」对话框展示与打开）。"""
+        return os.path.abspath(self.store.dir)
+
+    def _open_data_dir(self) -> None:
+        """调用系统文件管理器打开数据目录（「关于」对话框的按钮动作）。"""
+        path = self.data_dir()
+        try:
+            os.makedirs(path, exist_ok=True)   # 目录尚未创建时先建，否则打开会失败
+        except OSError as ex:
+            self._set_status("无法创建数据目录：" + str(ex), False)
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+            self._set_status("未能调起文件管理器；路径：" + path, False)
+
+    # 「关于」对话框正文（富文本）。{crypto} 由 _crypto_summary() 填充后转义。
+    ABOUT_HTML = (
+        "<h3>工作考勤表（Attendance Desktop）</h3>"
+        "<p>本地离线 · 月度考勤与工资核算工具（Python / PySide6）</p>"
+        "<p>开源许可：<b>GNU General Public License v3.0</b></p>"
+        "<p>数据加密：<b>{crypto}</b></p>"
+        "<hr>"
+        "<p><b>免责声明</b><br>"
+        "本软件为免费开源工具，仅作工资核算参考，不构成法律 / 税务 / 财务意见。<br>"
+        "内置的节假日、最低工资等数据请以官方最新发布为准；"
+        "社保 / 公积金 / 个税等参数需按当地政策自行核对。<br>"
+        "<b>用于正式发薪前请务必人工复核。</b></p>")
+
+    def _crypto_summary(self) -> str:
+        """当前数据加密方式的简短描述（供「关于」对话框展示）。
+
+        只读 ``crypto.describe()`` 的配置摘要 —— **不含任何密钥材料**，可安全展示。
+        异常在这里就地吞掉：拿不到诊断信息，不该让「关于」整体打不开。
+        """
+        try:
+            info = crypto.describe(getattr(self.store, "key_dir", None))
+        except Exception as ex:
+            return "检测失败：" + str(ex)
+        if info["backend"] == "plain":
+            return "未加密（明文存储）"
+        ready = "密钥已就绪" if info["key_ready"] else "密钥将在首次保存时生成"
+        return f"{info['algorithms']}（{ready}）"
+
     def _show_about(self):
-        """关于 / 免责声明。"""
-        QMessageBox.about(
-            self, "关于 · 工作考勤表",
-            "<h3>工作考勤表（Attendance Desktop）</h3>"
-            "<p>本地离线 · 月度考勤与工资核算工具（Python / PySide6）</p>"
-            "<p>开源许可：<b>GNU General Public License v3.0</b></p>"
-            "<hr>"
-            "<p><b>免责声明</b><br>"
-            "本软件为免费开源工具，仅作工资核算参考，不构成法律 / 税务 / 财务意见。<br>"
-            "内置的节假日、最低工资等数据请以官方最新发布为准；"
-            "社保 / 公积金 / 个税等参数需按当地政策自行核对。<br>"
-            "<b>用于正式发薪前请务必人工复核。</b></p>")
+        """关于 / 免责声明 + 当前数据加密方式 + 数据目录入口。"""
+        box = QMessageBox(self)
+        box.setWindowTitle("关于 · 工作考勤表")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(self.ABOUT_HTML.format(crypto=html.escape(self._crypto_summary())))
+        # ⚠ 富文本下 \n 会被折叠成空格，换行必须写 <br>；路径里的 < & 需单独转义
+        box.setInformativeText(
+            "数据目录（按月 JSON 存档）：<br><tt>" + html.escape(self.data_dir()) + "</tt>")
+        open_btn = box.addButton("打开数据目录", QMessageBox.ButtonRole.ActionRole)
+        ok_btn = box.addButton("确定", QMessageBox.ButtonRole.AcceptRole)
+        # ⚠ 必须显式指定 escape 按钮：× 与 Esc 只会去「点」承担 escape 角色的按钮
+        # （RejectRole / Escape）。本对话框只有 ActionRole + AcceptRole，不指定的话
+        # 点 × 会被静默忽略 —— 表现为「关不掉」。（标准按钮 setStandardButtons(Ok)
+        # 没这个问题，只有自定义 addButton 才有。）
+        box.setEscapeButton(ok_btn)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            self._open_data_dir()
 
     # 状态栏提示的驻留时长（毫秒）：业务结果提示得停留一会儿，
     # 否则 150ms 后自动保存的「已保存 12:34:56」会把它顶掉，提示等于没显示。

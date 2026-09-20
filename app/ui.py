@@ -4,10 +4,29 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+import os
+
+from PySide6.QtCore import QStandardPaths, Qt
 from PySide6.QtWidgets import QDoubleSpinBox, QLabel, QPushButton, QSizePolicy
 
 from . import model
+
+
+def default_export_path(filename: str) -> str:
+    """导出对话框的初始路径：优先「文档」目录，取不到再回退用户主目录。
+
+    为什么必须显式给：``QFileDialog.getSaveFileName`` 的初始目录留空时，Qt 会沿用
+    “上次使用目录”或进程的当前工作目录 —— 从 ``.desktop`` 启动时 CWD 往往是 ``/``
+    或 home，用户会觉得导出的文件“不知道存哪里去了”。
+    """
+    base = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.DocumentsLocation)
+    if not base or not os.path.isdir(base):
+        base = os.path.expanduser("~")
+    # normpath：QStandardPaths 返回正斜杠路径，与 os.path.join 拼出来会混用两种
+    # 分隔符（Windows 下显示与字符串比较都很别扭）
+    return os.path.normpath(os.path.join(base, filename))
+
 
 # 左侧导航六区（顺序即页面索引）
 PAGES = [

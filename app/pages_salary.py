@@ -123,7 +123,7 @@ class SalaryPageMixin:
             except Exception:
                 pass
         show_lock_banner(getattr(self, "_lock_banner", None), locked)
-        # 月份解锁（非整月只读）后：重放字段级锁，避免 ot_auto / 个税自动 / 加班基数锁
+        # 月份解锁（非整月只读）后：重放字段级锁，避免「个税自动 / 加班基数锁」
         # 对应的输入框被 setEnabled(True) 一并放开。
         if not locked:
             if hasattr(self, "_apply_auto_states"):
@@ -232,20 +232,14 @@ class SalaryPageMixin:
         self._pi_touched()
 
     def _apply_auto_states(self):
-        """按 book 里的自动开关状态启用/停用对应输入框。
+        """按 book 里的自动开关启用/停用对应输入框。
 
-        * ``income_tax_auto`` → 个税自动按预扣率表算，禁用个税输入框（界面上有开关）；
-        * ``ot_auto`` → 加班小时改为按考勤逐日汇总，禁用三档小时输入框。
-          当前版本**不在界面上提供**这个开关，这里保留分支仅为兼容
-          ``ot_auto=True`` 的历史存档（否则那几个月的手填小时数会失效）。
+        * ``income_tax_auto`` → 个税自动按预扣率表算，禁用个税输入框（界面上有开关）。
+
+        三档加班小时始终由用户手填，没有自动模式，故此处不涉及。
         """
         if not hasattr(self, "_salary_spins") or self._book is None:
             return
-        ot_auto = bool(getattr(self._book, "ot_auto", False))
-        for attr in ("workday_ot_hours", "restday_ot_hours", "holiday_ot_hours"):
-            sp = self._salary_spins.get(attr)
-            if sp is not None:
-                sp.setEnabled(not ot_auto)
         tax_auto = bool(getattr(self._book, "income_tax_auto", False))
         sp = self._salary_spins.get("income_tax")
         if sp is not None:
@@ -269,7 +263,7 @@ class SalaryPageMixin:
         if r is None or not hasattr(self, "_salary_strip"):
             return
         self._salary_strip.sync(r)
-        self._ot_card.sync(r, self._book, auto_write_hours=True)
+        self._ot_card.sync(r, self._book)
         self._ded_card.sync(r, self._book)
 
     def _sync_salary_ui(self):

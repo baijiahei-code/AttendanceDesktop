@@ -8,9 +8,9 @@ from datetime import date
 # ====== 常量：考勤状态 / 工资项类型 ======
 
 STATUS_LABELS = ["上班", "休息", "事假", "病假", "婚假", "丧假", "产假", "年假", "其他"]
-# 属于「提供正常劳动」的状态：上班 + 法定带薪假期（Excel B15 口径）
-# 视为「提供正常劳动」的状态（与 calc._count_attendance 的字段汇总口径一致，
-# 改这里必须同步 calc，否则合规天数会与报表不一致）
+# 视为「提供正常劳动」的状态（Excel B15 口径）。⚠ 改这里必须同步
+# calc._count_attendance 的字段汇总，否则合规天数与报表会不一致。
+# 注：本集合目前无代码引用，保留作为业务规则的显式声明。
 NORMAL_LABOR_STATUSES = {"上班", "婚假", "丧假", "产假", "年假"}
 MARK_LABELS = ["", "法定节假日", "其他视为提供正常劳动的天数"]
 
@@ -30,8 +30,8 @@ PAYITEM_TYPE_DESC = {
     "fixed_allow": "月固定 · 不计入最低工资标准",
     "perday_allow": "每日标准 × 上班天数 · 不计入最低工资标准",
 }
-# 工资项分类：是否计入最低工资判定
-# 计入「最低工资」判定口径的工资项类型（实际汇总在 calc._pay_item_totals）
+# 计入「最低工资」判定口径的工资项类型（实际汇总见 calc._pay_item_totals；
+# 本集合目前无代码引用，保留作为业务规则的显式声明）
 PAYITEM_COUNTS_IN_MIN = frozenset({"wage"})
 # 新增一项时的默认名称
 PAYITEM_DEFAULT_NAME = {
@@ -131,10 +131,17 @@ class DayEntry:
     leave_hours: float = 0.0
 
     def is_weekend_dt(self, year: int, month: int) -> bool:
+        """该日是否为自然周的周六 / 周日。
+
+        ⚠ 只看自然周，**不查调休表**（调休补班的周六在此仍算「周末」）。
+        唯一使用者是 `calc._count_attendance`（累计 `Counts.weekend`，仅用于报表展示）；
+        三档加班小时由用户手填、不经过这里，故无需处理调休。
+        """
         return date(year, month, self.day).weekday() >= 5
 
 
 def days_in_month(year: int, month: int) -> int:
+    """当月天数；year / month 非法（无法转 int 或 month 越界）时返回 0。"""
     try:
         y, m = int(year), int(month)
     except Exception:
@@ -150,8 +157,11 @@ _MONTHBOOK_SKIP = frozenset({"days", "pay_items"})
 _MONTHBOOK_FLOAT_FIELDS = None  # 首次计算缓存
 
 
-def _float_fields():
-    """返回 MonthBook 中非集合/非字符串的 float 字段名集合（缓存）。"""
+def _float_fields() -> frozenset:
+    """MonthBook 中「声明类型为 float」的字段名集合（排除 days / pay_items），首次调用后缓存。
+
+    `from_dict()` 用它决定哪些字段需要走 `_safe_float` 解析（而不是直接 setattr）。
+    """
     global _MONTHBOOK_FLOAT_FIELDS
     if _MONTHBOOK_FLOAT_FIELDS is None:
         fs = [f.name for f in fields(MonthBook)
@@ -195,16 +205,17 @@ class MonthBook:
 
     # —— 加班 / 个税 / 个人扣项 ——
     fixed_overtime_wage: float = 0.0     # 固定加班工资（不按小时算的）
-    workday_ot_hours: float = 0.0        # 备用：集中加班小时
-    restday_ot_hours: float = 0.0
-    holiday_ot_hours: float = 0.0
+    # 三档加班小时：**由用户在薪酬页手工填写**（不按考勤自动推算）。
+    workday_ot_hours: float = 0.0        # 工作日加班小时（×1.5）
+    restday_ot_hours: float = 0.0        # 休息日加班小时（×2）
+    holiday_ot_hours: float = 0.0        # 法定节假日加班小时（×3）
     big_disease: float = 0.0              # 大病医疗补助（元/月）
     income_tax: float = 0.0               # 手动覆盖个税；income_tax_auto=True 时忽略
     income_tax_auto: bool = False         # 个税自动按「当月预扣率表」算
-    ot_auto: bool = False                 # 加班小时按考勤逐日自动汇总（忽略上面 3 个集中字段）
 
     # —— 月份状态标记 ——
-    locked: bool = False                  # 已锁定：拒绝复制到该月 / 套用模板 / 删除 / 清空考勤（仍可手动浏览与微调）
+    locked: bool = False                  # 整月只读：UI 全面禁用 + 写入拦截（双保险）；
+                                          # 仍可浏览、切月、导出 Excel，并可手动解锁
 
     # —— 工资项（可增删，type 见 PAYITEM_TYPES）——
     pay_items: list[PayItem] = field(default_factory=list)

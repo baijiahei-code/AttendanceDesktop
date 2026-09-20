@@ -138,8 +138,7 @@ class OvertimeCardWidget(QFrame):
     def lock_btn(self) -> QPushButton:
         return self._lock_btn
 
-    def sync(self, r, b: model.MonthBook | None = None,
-             auto_write_hours: bool = False):
+    def sync(self, r, b: model.MonthBook | None = None):
         """根据结果刷新三档金额与加班小计。
 
         小计 = **固定加班工资 + 三档加班工资**（与报表「工资核算（应发）」的四行
@@ -158,15 +157,3 @@ class OvertimeCardWidget(QFrame):
         fixed = float(getattr(b, "fixed_overtime_wage", 0.0) or 0.0) if b is not None else 0.0
         self._total.setText(
             f"加班工资小计 ¥ {r.overtime_wage_total + fixed:,.2f}")
-
-        # 自动模式下回写到对应的 spin（保持所见即所得）
-        if auto_write_hours and b is not None:
-            if getattr(b, "ot_auto", False):
-                for attr, val in (("workday_ot_hours", r.ot_hours_workday),
-                                  ("restday_ot_hours", r.ot_hours_restday),
-                                  ("holiday_ot_hours", r.ot_hours_holiday)):
-                    sp = self._spins.get(attr)
-                    if sp is not None and abs(sp.value() - val) > 1e-6:
-                        sp.blockSignals(True)
-                        sp.setValue(val)
-                        sp.blockSignals(False)

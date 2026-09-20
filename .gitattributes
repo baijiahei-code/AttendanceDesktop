@@ -1,0 +1,27 @@
+# 换行符策略
+#
+# 本仓库同时在 Windows（打包 exe）与信创 Linux（打包 deb）上开发，
+# 必须显式指定换行符，否则 `core.autocrlf` 的设置会让另一端拿到错误的行尾。
+
+# shell 脚本必须 LF：CRLF 会让 Linux/macOS 报
+#   bad interpreter: /bin/sh^M: bad interpreter: No such file or directory
+*.sh    text eol=lf
+
+# Windows 批处理用 CRLF（cmd 对 LF 也能跑，但 CRLF 更规范）
+*.bat   text eol=crlf
+
+# 二进制文件：禁止任何行尾/编码转换
+*.png   binary
+*.ico   binary
+*.qm    binary
+*.exe   binary
+*.deb   binary
+*.gz    binary
+
+# 语言与配置：统一按 LF 存储（仓库内部一致，检出时按平台自动转换）
+*.py    text
+*.md    text
+*.iss   text
+*.spec  text
+*.txt   text
+*.json  text
