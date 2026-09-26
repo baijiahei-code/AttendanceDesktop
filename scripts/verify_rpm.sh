@@ -83,8 +83,10 @@ fi
 launcher="$tmp/usr/lib/attendance-desktop/AttendanceDesktop"
 if [ -x "$launcher" ]; then
     echo "  以 offscreen 启动，8 秒后自动结束（124 = 一直存活，属正常）"
+    # 运行日志放进解包目录：它随着开头的 EXIT trap 一起被清掉，不在 /tmp 留垃圾
+    run_log="$tmp/run.log"
     set +e
-    QT_QPA_PLATFORM=offscreen timeout 8 "$launcher" > /tmp/verify_rpm_run.log 2>&1
+    QT_QPA_PLATFORM=offscreen timeout 8 "$launcher" > "$run_log" 2>&1
     code=$?
     set -e
     if [ "$code" -eq 124 ]; then
@@ -93,12 +95,12 @@ if [ -x "$launcher" ]; then
         echo "  [注意] 程序自行退出了（码 0），请查看日志"
     else
         echo "  [FAIL] 启动异常，退出码 $code，日志："
-        tail -20 /tmp/verify_rpm_run.log
+        tail -20 "$run_log"
         exit 1
     fi
-    if [ -s /tmp/verify_rpm_run.log ]; then
+    if [ -s "$run_log" ]; then
         echo "  --- 运行日志 ---"
-        tail -10 /tmp/verify_rpm_run.log
+        tail -10 "$run_log"
     fi
 else
     echo "  [SKIP] 未解出可执行主程序（解包可能失败），跳过启动测试"

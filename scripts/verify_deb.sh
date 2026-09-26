@@ -7,6 +7,11 @@
 # 验证项：控制信息 / 文件清单 / 启动器与图标是否就位 / 解包后能否真正启动
 set -e
 
+# 解包目录（260MB+）必须**无论脚本怎么退出**都被清理：用 EXIT trap，
+# 而不是只在末尾写一句 rm —— 中途 exit 1（启动失败 / SM3 不一致）就会漏下它。
+tmp=""
+trap 'rm -rf "$tmp"' EXIT
+
 deb="$1"
 if [ -z "$deb" ] || [ ! -f "$deb" ]; then
     echo "用法: bash scripts/verify_deb.sh <路径.deb>"
@@ -49,8 +54,10 @@ launcher="$tmp/usr/lib/attendance-desktop/AttendanceDesktop"
 [ -x "$launcher" ] || { echo "  [FAIL] 主程序不可执行"; exit 1; }
 
 echo "  以 offscreen 启动，8 秒后自动结束（124 = 一直存活，属正常）"
+# 运行日志放进解包目录：它随着上面的 EXIT trap 一起被清掉，不在 /tmp 留垃圾
+run_log="$tmp/run.log"
 set +e
-QT_QPA_PLATFORM=offscreen timeout 8 "$launcher" > /tmp/verify_deb_run.log 2>&1
+QT_QPA_PLATFORM=offscreen timeout 8 "$launcher" > "$run_log" 2>&1
 code=$?
 set -e
 if [ "$code" -eq 124 ]; then
@@ -59,12 +66,12 @@ elif [ "$code" -eq 0 ]; then
     echo "  [注意] 程序自行退出了（码 0），请查看日志"
 else
     echo "  [FAIL] 启动异常，退出码 $code，日志："
-    tail -20 /tmp/verify_deb_run.log
+    tail -20 "$run_log"
     exit 1
 fi
-if [ -s /tmp/verify_deb_run.log ]; then
+if [ -s "$run_log" ]; then
     echo "  --- 运行日志 ---"
-    tail -10 /tmp/verify_deb_run.log
+    tail -10 "$run_log"
 fi
 
 echo
@@ -94,6 +101,7 @@ else
 fi
 
 echo
-# 免 root 验证的全过程 —— 临时目录（解包 260MB+）必须真删，别只打印命令
+# 免 root 验证的全过程 —— 临时目录（解包 260MB+）正常路径由开头的 EXIT trap 清理，
+# 这里再兑底删一次（幂等）
 rm -rf "$tmp"
 echo "✅ 验证完成（临时目录已清理）"
