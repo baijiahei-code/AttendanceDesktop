@@ -148,6 +148,11 @@ ARCH_MAP = {
 }
 
 SPEC_TEMPLATE = string.Template("""\
+# payload 压缩方式：rpmbuild 默认是 gzip -9，同样的文件树比 deb 的 xz 多占约 30MB
+# （实测 gzip=105.6MB vs xz≈76MB）。改 xz 后体积与 deb 相当，也让 Gitee 发行版
+# 能放下（那边单附件上限 100MB），用户下载流量也更省。
+%define _binary_payload w7.xzdio
+
 Name:           $pkg
 Version:        $version
 Release:        $release
