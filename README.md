@@ -5,6 +5,15 @@
 按月记录出勤与工资项，自动核算加班费、社保 / 公积金、请假扣款、应发 / 实发、
 **最低工资与工时合规判定**，把每月「填表 + 算工资」从 Excel 公式里解放出来。
 
+## 下载
+
+普通用户可直接取打包好的安装包（**无需 Python 环境**）：见仓库 **Releases** 页面。
+
+- **Windows**：`AttendanceDesktop-Setup-<版本>.exe`（安装程序）/ `AttendanceDesktop-v<版本>-win64.zip`（免安装）
+- **Linux**：`attendance-desktop_<版本>_amd64.deb`（Debian 系）/ `attendance-desktop-<版本>-1.x86_64.rpm`（rpm 系）
+
+> 本仓库**不含**打包产物（`release/` 已被 `.gitignore` 忽略）；需要自行构建见下文「打包发行」。
+
 ## 特性
 
 - 📅 **彩色月历**：逐日 9 种出勤状态，右键格子快捷改状态 / 标记
@@ -20,13 +29,14 @@
 ## 环境要求
 
 - **Python 3.10+**（开发 / 打包机，实测 3.14）
-- **操作系统**：Windows 10+；Linux **x86_64 且 glibc ≥ 2.38**（预编译 deb，实测基线）
-- 打 Windows 安装程序需额外安装 **Inno Setup 6**；打 deb 需 Debian 系（`dpkg-deb`）
+- **操作系统**：Windows 10+；Linux **x86_64 且 glibc ≥ 2.38**（预编译安装包 deb / rpm 的实测基线）
+- 打包需对应的工具链：Windows 装 **Inno Setup 6**；deb 需 Debian 系的 `dpkg-deb`；
+  rpm 需 `rpmbuild`（Debian 系可 `sudo apt install -y rpm` 获取）
 
-> ⚠️ **Linux 版系统要求（重要）**：预编译的 deb 适用于 **x86_64、glibc ≥ 2.38** 的系统
-> （已验证 Deepin 25、openEuler 24.03+）。**麒麟 V10（glibc 2.23）、麒麟 V10 SP1（2.31）、
-> 统信 UOS 20（约 2.28）等既有信创版本无法直接安装**，原因与解法见下文「deb 打包」的
-> glibc 基线说明。安装前请自查：`getconf GNU_LIBC_VERSION && uname -m`
+> ⚠️ **Linux 版系统要求（重要）**：预编译安装包（deb / rpm）要求 **x86_64 且 glibc ≥ 2.38** ——
+> 已验证 Deepin 25（2.38）与 openEuler 24.03+（2.38）。**麒麟 V10（glibc 2.23）、麒麟 V10 SP1（2.31）、
+> 统信 UOS 20（约 2.28）等既有信创版本无法直接安装**（原因与解法见下文「Linux / 信创（deb / rpm）」的
+> glibc 基线）。安装前自查：`getconf GNU_LIBC_VERSION && uname -m`
 
 > 敏感设置（API 凭据）的加密方式随平台而异：Windows 用 DPAPI，其它平台用国密
 > SM2 + SM4 + HMAC-SM3（见 `app/crypto.py`、`app/gm.py`，细节见下文「敏感字段加密」）。
@@ -39,10 +49,10 @@
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
 .\.venv\Scripts\python.exe main.py          # 启动桌面应用
-.\\.venv\\Scripts\\python.exe scripts\\smoke_test.py   # 离屏冒烟测试（QT_QPA_PLATFORM=offscreen）
+.\.venv\Scripts\python.exe scripts\smoke_test.py      # 离屏冒烟测试（QT_QPA_PLATFORM=offscreen）
 ```
 
-**Linux（需 glibc ≥ 2.34 —— PySide6 6.11 的 wheel 标签，比预编译 deb 的要求低）**：
+**Linux（需 glibc ≥ 2.34 —— PySide6 6.11 的 wheel 标签，比预编译安装包的要求低）**：
 
 ```bash
 bash scripts/setup_linux.sh       # 建 venv + 装依赖 + 跑国密自证
@@ -102,115 +112,51 @@ Windows 无需处理：`%LOCALAPPDATA%` 的 ACL 本身按用户隔离。
 xcopy /E /I /H /Y dist\AttendanceDesktop release\AttendanceDesktop
 ```
 
-> `release/`、`build/`、`dist/`、`.venv/` 均被 `.gitignore` 忽略，不入库；
+> `release/`、`build/`、`dist/`、`build_deb/`、`build_rpm/`、`.venv/` 均被 `.gitignore` 忽略，不入库；
 > 发行二进制建议以 **GitHub Releases 附件** 形式发布。
 
 ### Linux / 信创（deb / rpm）
 
 ```bash
 bash scripts/setup_linux.sh       # 首次：建 venv + 装依赖 + 跑国密自证
-./一键打包.sh                     # 打 deb（= .venv/bin/python scripts/pack_all.py deb）
+./一键打包.sh                     # 打 deb（默认）
 ./一键打包.sh rpm                 # 打 rpm（需先装工具链：sudo apt install -y rpm）
 ./一键打包.sh all                 # 一次出齐 deb + rpm
 ```
 
-同样可以直接调底层实现：
+也可直接调底层：`.venv/bin/python scripts/pack_deb.py`（deb）、`.venv/bin/python scripts/pack_rpm.py`
+（rpm）；统一入口是 `scripts/pack_all.py`（`deb` / `rpm` / `all`）。
 
-- `.venv/bin/python scripts/pack_deb.py`（PyInstaller → 组装 deb 树 → `dpkg-deb` → SM3 摘要）
-- `.venv/bin/python scripts/pack_rpm.py`（PyInstaller → 组装文件树 + 生成 spec → `rpmbuild -bb` → SM3 摘要）
+产物与安装（均附同名 `.sm3` 摘要文件）：
 
-产物（均附同名 `.sm3` 摘要文件）：
+| 格式 | 产物 | 适用系统 | 安装 |
+| --- | --- | --- | --- |
+| deb | `release/attendance-desktop_<版本>_<架构>.deb` | Debian 系 Linux（如 Deepin 25） | `sudo apt install ./<包>` |
+| rpm | `release/attendance-desktop-<版本>-<release>.<架构>.rpm` | rpm 系 Linux（如 openEuler 24.03+） | `sudo dnf install ./<包>` |
 
-| 格式 | 文件名 | 适用系统 |
-| --- | --- | --- |
-| deb | `release/attendance-desktop_<版本>_<架构>.deb` | Debian 系 Linux（如 Deepin 25） |
-| rpm | `release/attendance-desktop-<版本>-<release>.<架构>.rpm` | rpm 系 Linux（如 openEuler 24.03+） |
+卸载：`sudo apt remove attendance-desktop` / `sudo dnf remove attendance-desktop`（均保留用户数据）。
+版本号取自 `installer.iss` 的 `AppVersion`，架构自动探测（`amd64` → `x86_64` 等）。
+安装内容：`/usr/lib/attendance-desktop/`（程序本体）、`/usr/bin/attendance-desktop`（启动器，
+默认设 `QT_QPA_PLATFORM=xcb`）、`.desktop` 入口与 hicolor 图标。
 
-> ⚠️ **能装到哪些系统由构建机的 glibc 决定，与包格式无关** —— 上表只说明「这个包属于
-> 哪一族」。当前构建基线是 glibc 2.38，所以麒麟 V10(2.23) / V10 SP1(2.31) / UOS 20(≈2.28)
-> 等既有信创版本**装了也起不来**，详见本节末尾的「glibc 基线」。
+离线验证（免 root、不污染系统）：`bash scripts/verify_deb.sh release/*.deb`、
+`bash scripts/verify_rpm.sh release/*.rpm`（后者需 `rpm` + `cpio`）。
 
-版本号取自 `installer.iss` 的 `AppVersion`；deb 的架构由 `dpkg --print-architecture`
-探测，rpm 在此基础上再做命名映射（amd64 → x86_64、arm64 → aarch64、loong64 → loongarch64）。
-
-离线验证（都不需要 root、不污染系统）：
-
-```bash
-bash scripts/verify_deb.sh release/*.deb
-bash scripts/verify_rpm.sh release/*.rpm     # 需 rpm + cpio
-```
-
-> **一个入口，三种口径**：`scripts/pack_all.py` 统一分派 ——
-> Windows 走 `pack_windows.py`（exe + 免安装目录）；Linux 走 `pack_deb.py`（deb）、
-> `pack_rpm.py`（rpm），或 `all`（依次构建 deb + rpm）。
-> **deb 与 rpm 共用同一套 PyInstaller 产物与运行时裁剪逻辑**
-> （`pack_rpm.py` 直接复用 `pack_deb.py` 的函数），差别只在最后的包格式组装。
-> PyInstaller 不能交叉编译，deb / rpm 也各自依赖本机的 `dpkg-deb` / `rpmbuild`，
-> 所以 Windows 与 Linux **必须各跑一次**（跨平台做不到一条命令）。
-> ⚠️ `all` 里两个包**各跑一遍 PyInstaller**（中间产物不能复用），耗时约翻倍。
-> 在 Windows 上误传 `deb` / `rpm` / `all` 会被直接拒绝并说明原因（退出码 2，不会静默失败）。
-
-安装与卸载：
-
-```bash
-# deb（推荐 apt install：会一并装 Recommends 里的 xcb 组件与中文字体）
-sudo apt install ./release/attendance-desktop_*.deb
-
-# 或只用 dpkg（不处理 Recommends）
-sudo dpkg -i release/attendance-desktop_*.deb
-sudo apt -f install                  # 补未满足的 Depends
-dpkg -L attendance-desktop           # 查看安装内容
-sudo dpkg -r attendance-desktop      # 卸载（保留用户数据）
-
-# rpm（推荐 dnf：会一并解析 Recommends）
-sudo dnf install ./release/attendance-desktop-*.rpm
-rpm -ql attendance-desktop           # 查看安装内容
-sudo dnf remove attendance-desktop   # 卸载（保留用户数据）
-
-# 若只有 rpm 命令（注意：rpm -ivh 不处理 Recommends，见下方说明）
-sudo rpm -ivh release/attendance-desktop-*.rpm
-sudo rpm -e attendance-desktop
-```
-
-> ⚠️ **rpm 侧请优先用 `dnf install`，不要只靠 `rpm -ivh`**（openEuler 24.03-LTS 实测）：
-> Qt 6.5 起 `xcb` 平台插件需要 `libxcb-cursor.so.0`，它在 RPM 体系里叫 **`xcb-util-cursor`**，
-> 且**只存在于 openEuler 的 EPOL 仓库**。该依赖写在 `Recommends` 而非 `Requires` —— 未启用
-> EPOL 的机器上取不到它，写成硬依赖会让**整包装不上**；写成 `Recommends` 则「能取到就自动装」。
+> ⚠️ **两点必须注意**
 >
-> - `sudo dnf install ./xxx.rpm` → 连同 EPOL 一起解析，实测会装上 `xcb-util-cursor`、
->   `mesa-libGL/EGL`、`google-noto-sans-cjk-ttc-fonts` 等 **28 个包**，开箱即可用；
-> - `sudo rpm -ivh xxx.rpm` → **不处理 Recommends**，实测装完启动报
->   `ImportError: libGL.so.1: cannot open shared object file`（缺 `mesa-libGL`；`libxcb-cursor` 同理）。
->   此时补装：`sudo dnf install mesa-libGL mesa-libEGL libxkbcommon-x11 fontconfig dbus-libs xcb-util-cursor`。
->
-> openEuler 24.03-LTS **默认已启用 EPOL**，实测可直接装上；若你的系统禁用了它：
-> `sudo dnf --enablerepo=EPOL install xcb-util-cursor`。
-> 中文字体（缺了界面中文会显示成方块）对应 RPM 包名是 **`google-noto-sans-cjk-ttc-fonts`**。
->
-> **实测记录（openEuler 24.03-LTS 容器 / glibc 2.38 / x86_64）**：`rpm -ivh` 与 `dnf install` 退出码
-> 均为 0（后者自动装入 **28 个包**）；`rpm -V` 完整性校验通过、共 **292 个文件**、属主 root:root；
-> `rpm -e` 卸载无残留。程序在 `offscreen` 与真实 **`xcb`** 后端下均能正常启动（后者用 Xvfb 虚拟
-> 显示验证，持续运行未崩溃）。
+> 1. **装到哪些系统由构建机的 glibc 决定，与包格式无关** —— 当前构建基线 glibc 2.38，所以
+>    麒麟 V10(2.23) / V10 SP1(2.31) / UOS 20(≈2.28) 等既有信创版本**装了也起不来**；系统对照表
+>    与「降基线必须同时做两件事」见 `ARCHITECTURE.md` → **Linux 兼容性基线（glibc）**。
+> 2. **rpm 请用 `dnf install`，别只用 `rpm -ivh`** —— 后者不处理 `Recommends`，会缺掉 Qt 运行库
+>    与 `xcb-util-cursor`（该包只在 openEuler 的 **EPOL** 仓库）而启动失败；实测数据与补装
+>    命令见 `ARCHITECTURE.md` → **Linux 包格式（deb / rpm）**。
 
-安装内容：`/usr/lib/attendance-desktop/`（程序本体）、`/usr/bin/attendance-desktop`
-（启动器，默认设 `QT_QPA_PLATFORM=xcb`）、`.desktop` 入口与 hicolor 图标。
-
-> ⚠️ **glibc 基线（实测）**：deb / rpm 能装到哪些系统，由**构建机的 glibc** 决定 —— PyInstaller 会把
-> 构建机的 `libpython`、`libstdc++`、GTK/GLib 等库一并收进包内，这些库的符号版本就是下限。
-> **两种格式共用同一套运行时，基线完全相同**（同一台机器上构建就是同一基线）。
-> 在 **Deepin 25（glibc 2.38）** 上构建的包实测要求 **GLIBC_2.38**、`Architecture: amd64`，
-> 因此**装不进**麒麟 V10(2.23) / 麒麟 V10 SP1(2.31) / UOS 20(约 2.28)；可用的是
-> **openEuler 24.03+、Deepin 23+** 等较新基线系统。
->
-> 要覆盖旧基线必须**同时改两件事**：
-> 1. 在低 glibc 容器内构建（`python:3.11-slim-bullseye` = 2.31、`python:3.11-slim-buster` = 2.28）；
-> 2. **把 PySide6 降到 ≤ 6.7** —— PySide6 6.11 的 wheel 标签是 `manylinux_2_34`，
->    在 2.31 / 2.28 的容器里**根本装不上**，只换构建环境是无效的。
->
-> 而麒麟 V10 的 glibc 2.23 低于 Qt6 全家（≥ 2.28）的下限，需换 Qt5 技术栈才可能支持。
-> 目标机自查：`getconf GNU_LIBC_VERSION` 或 `ldd --version | head -1`。
->
-> 包内文件属主由 `dpkg-deb --root-owner-group` 固定为 root，**不需要 fakeroot**。
+> **一个入口，多平台分派**：`scripts/pack_all.py`（薄壳：`一键打包.bat` / `一键打包.sh`）——
+> Windows 走 `pack_windows.py`；Linux 走 `pack_deb.py` / `pack_rpm.py` / `all`。deb 与 rpm
+> **共用同一套 PyInstaller 产物与运行时裁剪逻辑**（`pack_rpm.py` 复用 `pack_deb.py` 的函数），
+> 差别只在最后的包格式组装；PyInstaller 不能交叉编译，所以 Windows 与 Linux **必须各跑一次**。
+> `all` 里两个包各跑一遍 PyInstaller（耗时约翻倍）；在 Windows 上误传 `deb` / `rpm` / `all`
+> 会被直接拒绝（退出码 2，不会静默失败）。
 
 依赖（`requirements.txt`）：
 
@@ -251,7 +197,7 @@ pyinstaller==6.22.2
 ├── installer.iss            Inno Setup 安装脚本
 ├── requirements.txt         Python 依赖
 ├── 一键打包.bat              一键打包（Windows 壳：双击即构建 exe + 免安装版）
-├── 一键打包.sh               一键打包（Linux 壳：默认打 deb，`./一键打包.sh rpm` 打 rpm）
+├── 一键打包.sh               一键打包（Linux 壳：默认打 deb，可传 rpm / all）
 ├── scripts/                 构建与测试脚本（不参与运行时打包）
 │   ├── pack_all.py          统一打包入口（按平台 / 格式分派：win / deb / rpm / all）
 │   ├── pack_windows.py      Windows 构建实现（PyInstaller + Inno Setup）

@@ -320,6 +320,29 @@ Qt 运行时库（`libxkbcommon-x11` / `mesa-libGL` / `mesa-libEGL` / `fontconfi
 `verify_rpm.sh`（`rpm -qpi/-qpl/-qplv` + `rpm2cpio | cpio -idm`；⚠ 不用 `rpm2archive`，
 它默认产出 `.tgz`、不保留安装路径树）。
 
+#### rpm 的软依赖与 EPOL 仓库（实测）
+
+Qt 6.5 起 `xcb` 平台插件需要 `libxcb-cursor.so.0`，它在 RPM 体系里叫 **`xcb-util-cursor`**，
+且**只存在于 openEuler 的 EPOL 仓库**（`OS` / `everything` 里都没有）—— 这正是它只能写
+`Recommends` 的原因：未启用 EPOL 的机器根本取不到它，写成 `Requires` 会让**整包装不上**。
+
+| 安装命令 | 实测结果（openEuler 24.03-LTS） |
+| --- | --- |
+| `sudo dnf install ./xxx.rpm` | 退出码 0；连 EPOL 一起解析，**自动装入 28 个包**（含 `xcb-util-cursor`、`mesa-libGL/EGL`、`google-noto-sans-cjk-ttc-fonts`），开箱可用 |
+| `sudo rpm -ivh xxx.rpm` | 退出码 0 但**不处理 `Recommends`** → 启动报 `ImportError: libGL.so.1: cannot open shared object file`（缺 `mesa-libGL`；缺 `libxcb-cursor` 同理） |
+
+- openEuler 24.03-LTS **默认已启用** `EPOL` 与 `EPOL-update`（`dnf repolist --all` 实测）；
+  若被禁用：`sudo dnf --enablerepo=EPOL install xcb-util-cursor`。
+- 用 `rpm -ivh` 装完后手动补齐：
+  `sudo dnf install mesa-libGL mesa-libEGL libxkbcommon-x11 fontconfig dbus-libs xcb-util-cursor`
+- 中文字体对应 RPM 包名是 **`google-noto-sans-cjk-ttc-fonts`**（缺了界面中文会显示成方块；
+  注意不是 `...-sans-cjk-fonts`，那个包在 openEuler 里不存在）。
+
+**实测记录（openEuler 24.03-LTS 容器 / glibc 2.38 / x86_64）**：`rpm -ivh` 与 `dnf install`
+退出码均为 0；`rpm -V` 完整性校验通过、共 **292 个文件**、属主 root:root；`rpm -e` 卸载无残留；
+程序在 `offscreen` 与真实 **`xcb`** 后端下均能正常启动（后者用 Xvfb 虚拟显示验证，持续运行未崩溃）。
+deb 侧在 **Deepin 25** 实测 `dpkg -i` 成功安装并可正常运行。
+
 ---
 
 ## 数据流（一次"用户改了一项"）
