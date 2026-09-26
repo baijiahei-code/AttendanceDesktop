@@ -233,8 +233,9 @@ ek       = SM2-公钥加密(k_master)            # 密文顺序 C1C3C2
 | `storage.default_data_dir()` | 同上 | `%LOCALAPPDATA%` vs `$XDG_DATA_HOME` |
 | `storage.secure_path()` | `os.name == "posix"` | 权限收紧只在 POSIX 生效 |
 | `main.py` 图标路径 | `sys._MEIPASS` | 开发 / PyInstaller 两种布局 |
-| `scripts/pack_all.py` | `os.name` | 统一打包入口：按平台分派到下面两个实现，平台不符直接拒绝（退出码 2） |
-| `scripts/pack_windows.py` / `pack_deb.py` | `sys.platform` | Windows 用 Inno Setup，Linux 用 dpkg-deb |
+| `scripts/pack_all.py` | `os.name` | 统一打包入口：按平台 / 格式分派（`win` / `deb` / `rpm` / `all`），平台不符直接拒绝（退出码 2） |
+| `scripts/pack_windows.py` | `sys.platform` | Windows 用 Inno Setup |
+| `scripts/pack_deb.py` / `pack_rpm.py` | `sys.platform` | Linux 分别用 `dpkg-deb` / `rpmbuild`；**两者共用同一套 PyInstaller 产物与裁剪逻辑**（`pack_rpm.py` 直接复用 `pack_deb.py` 的函数） |
 
 ### 国密自证（交付取证）
 
@@ -289,6 +290,36 @@ PyInstaller **不能交叉编译**，而且会把构建机的 `libpython`、`lib
 
 目标机自查：`getconf GNU_LIBC_VERSION`、`ldd --version | head -1`、`uname -m`。
 
+### Linux 包格式（deb / rpm）
+
+同一份产物要投递到两类包管理体系，因此有两个**平级**的组装脚本。PyInstaller 构建与运行时
+裁剪**只做一次**——`pack_rpm.py` 直接复用 `pack_deb.py` 里的函数（`trim_bundle` /
+`normalize_perms` / `read_version` / `sm3_of` 等），避免两处逻辑漂移。
+
+|  | deb（`pack_deb.py`） | rpm（`pack_rpm.py`） |
+| --- | --- | --- |
+| 组装方式 | 组装 `DEBIAN/` 目录树 | 组装安装后文件树 + 自动生成 `.spec` |
+| 打包命令 | `dpkg-deb --build --root-owner-group` | `rpmbuild -bb --define "_topdir …"` |
+| 架构字段 | `amd64` / `arm64`（`dpkg --print-architecture`） | `x86_64` / `aarch64`（`ARCH_MAP` 映射） |
+| 依赖字段 | `Depends:` / `Recommends:`（Debian 包名） | `Requires:` / `Recommends:`（RPM 包名，**由 deb 侧清单自动映射**：`libc6`→`glibc`、`libgl1`→`mesa-libGL`、`libdbus-1-3`→`dbus-libs`、`libxcb-cursor0`→`xcb-util-cursor` …） |
+| glibc 版本下限 | `Depends: libc6 (>= 构建机 glibc)` | `Requires: glibc >= 构建机 glibc` |
+| 软依赖特例 | `Recommends:` 里的 xcb 组件与 CJK 字体 | `xcb-util-cursor` **只能写 `Recommends`** —— 它仅在 openEuler 的 EPOL 仓库，写成 `Requires` 会让未启用 EPOL 的机器**整包装不上**（该库是 Qt6 xcb 插件的硬需求，故 README 单独说明补装方式） |
+| 许可文件 | `/usr/share/doc/<pkg>/copyright`（Debian 政策 §12.5） | `/usr/share/licenses/<pkg>/COPYING`（`%license`） |
+| 变更记录 | `changelog.gz`（§12.7） | `.spec` 的 `%changelog` 段 |
+| 入口 | `./一键打包.sh`（默认） | `./一键打包.sh rpm` |
+| 一次出齐 | `./一键打包.sh all`（两者各跑一遍 PyInstaller，耗时翻倍） | |
+| 工具链 | `dpkg-deb`（Debian 系自带） | `rpmbuild`（`sudo apt install -y rpm`） |
+
+⚠ **rpm 必须 `AutoReqProv: no`**：PyInstaller 产物内含数十个自带 `.so`，若放任自动依赖探测，
+它们会被全部登记成系统依赖，生成一长串目标机必然不满足的 `libX.so.1()(64bit)`，
+安装时报「依赖不满足」。关掉后改为显式声明：`Requires` = glibc 版本下限 + 缺了必然起不来的
+Qt 运行时库（`libxkbcommon-x11` / `mesa-libGL` / `mesa-libEGL` / `fontconfig` / `dbus-libs`），
+可选组件与 `xcb-util-cursor` 放 `Recommends`。
+
+两种格式各有一个免 root 的验证脚本：`verify_deb.sh`（`dpkg-deb -I/-c/-x`）与
+`verify_rpm.sh`（`rpm -qpi/-qpl/-qplv` + `rpm2cpio | cpio -idm`；⚠ 不用 `rpm2archive`，
+它默认产出 `.tgz`、不保留安装路径树）。
+
 ---
 
 ## 数据流（一次"用户改了一项"）
@@ -333,9 +364,9 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 | 改加密后端 / 令牌格式 | `app/crypto.py`（+ `app/gm.py` 算法层）；自证清单在 `gm.selftest()` |
 | 改数据目录位置 / 权限 | `app/storage.py` 的 `default_data_dir()` / `secure_path()` |
 | 改导出默认目录 | `app/ui.py:default_export_path()`（默认系统「文档」，回退 `~`） |
-| 改打包入口 / 平台分派 | `scripts/pack_all.py`（唯一入口）；薄壳：`一键打包.bat`（ASCII）/ `一键打包.sh`（LF） |
+| 改打包入口 / 格式分派 | `scripts/pack_all.py`（唯一入口）；薄壳：`一键打包.bat`（ASCII）/ `一键打包.sh`（LF，默认 deb） |
 | 改 Windows 打包 | `scripts/pack_windows.py`（PyInstaller + Inno Setup） |
-| 改 Linux deb 打包 / 验证 | `scripts/pack_deb.py`（构建）、`scripts/verify_deb.sh`（免 root 验证）、`scripts/setup_linux.sh`（环境） |
+| 改 Linux 打包 / 验证 | `scripts/pack_deb.py`、`scripts/pack_rpm.py`（构建，后者复用前者）、`scripts/verify_deb.sh` / `verify_rpm.sh`（免 root 验证）、`scripts/setup_linux.sh`（环境） |
 | 修改锁定行为 | `main_window._apply_lock_state` + `Card.set_locked()` |
 | 改工资计算规则 | `app/calc.py`，单测在 `scripts/smoke_test.py` 的 `calc OK` / `calc leave-fold edge OK` 段 |
 
@@ -352,6 +383,8 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 | 数据目录名保留中文「工作考勤表」 | 目录名用 ASCII | 与 Windows 版一致、用户一眼能认；需要 ASCII 时用 `ATT_DATA_DIR` 覆盖即可 |
 | openpyxl 直接写 cell | 用 pandas | 单 sheet / 简单版式够用，pandas 增加 ~30MB 依赖 |
 | 150ms 合并保存 | 实时保存 | 连续改 N 个字段只触发 1 次写盘与 1 次重算 |
+| rpm 构建**复用** `pack_deb.py` 的函数 | 抽 `_pack_common.py` 三方共用 | deb 链路已实测跑通，抽公共模块要改动它、引入回归风险；`import` 复用则零改动 |
+| rpm 关掉自动依赖探测（`AutoReqProv: no`） | 让 rpm 自动生成依赖 | 产物自带数十个 `.so`，自动生成的 Requires 目标机必然不满足 → 安装即报「依赖不满足」 |
 
 ---
 

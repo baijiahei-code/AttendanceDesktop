@@ -2,23 +2,29 @@
 # -*- coding: utf-8 -*-
 """统一打包入口：同一个命令，按平台产出对应版本。
 
-为什么不是「一条命令同时出两个版本」
-------------------------------------
-PyInstaller **不能交叉编译**（Windows 上打不出 Linux 可执行文件），deb 也必须在
-Debian 系上用 ``dpkg-deb`` 生成。所以「一台机器一次跑出两平台」在技术上不成立。
+为什么不能「一条命令同时出 Windows 与 Linux 版」
+------------------------------------------------
+PyInstaller **不能交叉编译**（Windows 上打不出 Linux 可执行文件），deb / rpm 也各自
+依赖本机的 ``dpkg-deb`` / ``rpmbuild``。所以「一台机器一次跑出两平台」在技术上不成立。
 本脚本解决的是**入口不统一**：两个平台都只记这一个命令，由它按平台分派。
+
+同一平台内则可以一次出齐：Linux 上用 ``all`` 依次构建 deb + rpm。
 
     Windows  ->  pack_windows.py  ->  release/AttendanceDesktop/        免安装目录
                                       release/工作考勤表_安装程序.exe    Inno 安装程序
     Linux    ->  pack_deb.py     ->  release/attendance-desktop_<版本>_<架构>.deb
                                       release/attendance-desktop_<版本>_<架构>.deb.sm3
+                 pack_rpm.py     ->  release/attendance-desktop-<版本>-<release>.<架构>.rpm
+                                      release/attendance-desktop-<版本>-<release>.<架构>.rpm.sm3
 
 用法（仓库根目录）::
 
-    python scripts/pack_all.py              # 按当前平台自动分派
+    python scripts/pack_all.py              # 按当前平台自动分派（Linux 默认 deb）
     python scripts/pack_all.py win          # 强制 Windows 流程（非 Windows 直接拒绝）
     python scripts/pack_all.py deb          # 强制 deb 流程（非 Linux 直接拒绝）
-    python scripts/pack_all.py deb --keep   # --keep 透传给 pack_deb.py（保留 build_deb/）
+    python scripts/pack_all.py rpm          # 强制 rpm 流程（需 rpmbuild，见 pack_rpm.py）
+    python scripts/pack_all.py all          # Linux 上一次出齐 deb + rpm
+    python scripts/pack_all.py deb --keep   # --keep 透传给底层脚本（保留中间目录）
     python scripts/pack_all.py --help
 
 双击入口（都是本脚本的薄壳，参数原样透传）::
@@ -53,7 +59,23 @@ TARGETS = {
         "deb 必须在 Debian 系 Linux 上构建（依赖 dpkg-deb）。"
         "请在 Linux 机器（或 WSL）上用同一入口执行。",
     ),
+    "rpm": (
+        "pack_rpm.py",
+        "Linux / 信创版：RPM 安装包（rpm 系 Linux，如 openEuler 24.03+）",
+        "posix",
+        "rpm 必须在 Linux 上构建（依赖 rpmbuild）。"
+        "Debian 系先装工具链：sudo apt install -y rpm",
+    ),
+    "all": (
+        None,                       # 聚合目标：没有单一底层脚本
+        "一键出齐：deb + rpm（两者都在本机 Linux 上构建）",
+        "posix",
+        "deb / rpm 都必须在 Linux 上构建。Windows 侧请用 一键打包.bat。",
+    ),
 }
+
+# `all` 依次构建的顺序
+ALL_TARGETS = ("deb", "rpm")
 
 
 def parse_args(argv: list[str]) -> tuple[str | None, list[str], bool]:
@@ -103,6 +125,25 @@ def summarize() -> None:
             print(f"  [文件] {item.name:<34} {mb:8.2f} MB")
 
 
+def run_target(target: str, extra: list[str]) -> int:
+    """跑一个 target 的底层脚本，返回其退出码（`all` 会逐个调用本函数）。"""
+    script, label, _want_platform, _hint = TARGETS[target]
+    script_path = SCRIPTS / script
+    if not script_path.exists():
+        print(f"\n[FATAL] 找不到底层脚本：{script_path}")
+        return 1
+    py = venv_python()
+    cmd = [str(py), str(script_path), *extra]
+    print(f"  底层脚本 : {script}  —— {label}")
+    print(f"  解释器   : {py}")
+    print(f"  透传参数 : {extra if extra else '（无）'}")
+    print("-" * 62, flush=True)
+    rc = subprocess.run(cmd, cwd=str(ROOT)).returncode
+    print("-" * 62)
+    print(f"  {script} 退出码 = {rc}")
+    return rc
+
+
 def main(argv: list[str]) -> int:
     target, extra, want_help = parse_args(argv)
     if want_help:
@@ -111,7 +152,7 @@ def main(argv: list[str]) -> int:
 
     # 未指定 target 时按当前平台自动选择；指定了但平台不符 → 下面给出明确拒绝原因
     target = target or ("win" if IS_WIN else "deb")
-    script, label, want_platform, hint = TARGETS[target]
+    _script, label, want_platform, hint = TARGETS[target]
     family = "nt" if IS_WIN else "posix"
 
     print("=" * 62)
@@ -119,29 +160,29 @@ def main(argv: list[str]) -> int:
     print("=" * 62)
     print(f"  当前平台 : {sys.platform}  (os.name={os.name})")
     print(f"  目标版本 : {target} —— {label}")
-    print(f"  底层脚本 : {script}")
 
     if family != want_platform:
         print(f"\n[FATAL] {hint}")
-        print("        两个平台各有一个一键脚本（一键打包.bat / 一键打包.sh），")
-        print("        请在目标平台上执行同一入口。")
+        print("        一键入口：Windows 用 一键打包.bat；Linux 用 ./一键打包.sh [deb|rpm|all]")
         return 2
 
-    script_path = SCRIPTS / script
-    if not script_path.exists():
-        print(f"\n[FATAL] 找不到底层脚本：{script_path}")
-        return 1
+    # `all`：依次构建 deb + rpm。⚠ PyInstaller 不能复用，两个包各跑一遍，耗时翻倍。
+    if target == "all":
+        print(f"\n  将依次构建：{' + '.join(ALL_TARGETS)}（PyInstaller 各跑一次，耗时约翻倍）")
+        rc = 0
+        for i, t in enumerate(ALL_TARGETS, 1):
+            print("\n" + "=" * 62)
+            print(f"  [{i}/{len(ALL_TARGETS)}] {t}")
+            print("=" * 62)
+            rc = run_target(t, extra)
+            if rc != 0:
+                print(f"\n[FAIL] {t} 构建失败（退出码 {rc}），已中止后续步骤。")
+                return rc
+        summarize()
+        print("\n打包完成。")
+        return rc
 
-    py = venv_python()
-    cmd = [str(py), str(script_path), *extra]
-    print(f"  解释器   : {py}")
-    print(f"  透传参数 : {extra if extra else '（无）'}")
-    print("-" * 62, flush=True)
-
-    rc = subprocess.run(cmd, cwd=str(ROOT)).returncode
-
-    print("-" * 62)
-    print(f"  {script} 退出码 = {rc}")
+    rc = run_target(target, extra)
     if rc == 0:
         summarize()
         print("\n打包完成。")

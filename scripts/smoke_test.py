@@ -643,3 +643,33 @@ print("storage OK")
 print("UI OK")
 print("readonly OK")
 print("UI OK")
+
+
+# ---- 打包依赖映射自检：deb ↔ rpm 的包名绝不能混用 ----
+# 回归背景：RPM 体系的包名与 Debian 不同，曾把 libxcb-cursor0 直接“翻译”成 libxcb-cursor，
+# 而 openEuler 里**没有**这个包（正确的是 xcb-util-cursor，且只在 EPOL 仓库）——
+# dnf 会静默跳过缺失的建议依赖，于是装完 Qt 的 xcb 插件起不来。
+# 这里冻结几个已逐项核对过目标仓库的映射，防止再次带着错的包名发布。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pack_deb as _pd  # noqa: E402
+import pack_rpm as _pr  # noqa: E402
+
+_rpm_req = _pr.rpm_requires()
+_rpm_rec = _pr.rpm_recommends()
+
+assert any(x.startswith("glibc") for x in _rpm_req), f"rpm Requires 必须含 glibc：{_rpm_req}"
+assert "xcb-util-cursor" in _rpm_rec, f"rpm Recommends 缺 xcb-util-cursor：{_rpm_rec}"
+assert "libxcb-cursor" not in _rpm_rec, "RPM 里没有 libxcb-cursor 这个包（Debian 才叫 libxcb-cursor0）"
+assert "google-noto-sans-cjk-ttc-fonts" in _rpm_rec, f"中文字体 RPM 包名不对：{_rpm_rec}"
+# rpm 侧不得残留 Debian 专有包名
+_debian_names = ("libc6", "libgl1", "libegl1", "libfontconfig1", "libdbus-1-3", "fonts-noto-cjk")
+_leaked = [x for x in _rpm_req + _rpm_rec if x in _debian_names]
+assert not _leaked, f"rpm 依赖里混进了 Debian 包名：{_leaked}"
+# 每个 deb 侧依赖都必须有映射，否则会带着 Debian 名发布
+_unmapped = [p for p in _pr._split_list(_pd.DEPENDS_LIBS) + _pr._split_list(_pd.RECOMMENDS)
+             if p not in _pr.DEB_TO_RPM]
+assert not _unmapped, f"未映射到 RPM 包名的 Debian 依赖：{_unmapped}"
+# 两个字段各自不能有重复项（多个 deb 名会落到同一个 rpm 名，如 libxcb）
+for _lst, _field in ((_rpm_req, "Requires"), (_rpm_rec, "Recommends")):
+    assert len(set(_lst)) == len(_lst), f"rpm {_field} 出现重复项：{_lst}"
+print("packaging deps OK")

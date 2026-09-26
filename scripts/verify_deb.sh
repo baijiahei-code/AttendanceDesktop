@@ -70,13 +70,30 @@ fi
 echo
 echo "=== 4) 校验和（与 .sm3 文件比对）==="
 if [ -f "$deb.sm3" ]; then
-    echo "  发布方 SM3: $(cut -d' ' -f1 "$deb.sm3")"
-    echo "  本地重算需 python + gmssl："
-    echo "    .venv/bin/python -c \"import sys; sys.path.insert(0,'.'); from app import gm; print(gm.sm3_hex(open('$deb','rb').read()))\""
+    pub=$(cut -d' ' -f1 < "$deb.sm3")
+    echo "  发布方 SM3: $pub"
+    # ⚠ 用 openssl 而不是纯 Python gmssl：后者算 72MB 的 deb 要 4 分半（实测）。
+    #   openssl 3.x 原生支持 SM3，且与 GB/T 32905 向量逐位一致。
+    set +e
+    local_sum=$(openssl dgst -sm3 "$deb" 2>/dev/null | awk '{print $NF}')
+    set -e
+    if [ -n "$local_sum" ]; then
+        echo "  本地重算:   $local_sum"
+        if [ "$local_sum" = "$pub" ]; then
+            echo "  [OK] SM3 摘要一致"
+        else
+            echo "  [FAIL] SM3 摘要不一致"
+            exit 1
+        fi
+    else
+        echo "  [SKIP] openssl 不支持 sm3（需 OpenSSL 3.x）"
+        echo "         备用：.venv/bin/python -c \"import sys; sys.path.insert(0,'.'); from app import gm; print(gm.sm3_hex(open('$deb','rb').read()))\""
+    fi
 else
-    echo "  未找到 $deb.sm3"
+    echo "  未找到 $deb.sm3（跳过比对）"
 fi
 
 echo
-echo "清理临时目录：rm -rf $tmp"
-echo "✅ 验证完成"
+# 免 root 验证的全过程 —— 临时目录（解包 260MB+）必须真删，别只打印命令
+rm -rf "$tmp"
+echo "✅ 验证完成（临时目录已清理）"

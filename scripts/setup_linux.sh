@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 在 Linux / 信创桌面（deb 系：Deepin、UOS、麒麟）上准备开发与打包环境。
+# 在 Linux / 信创（Deepin、UOS、麒麟、openEuler 等）上准备开发与打包环境。
+# 同一套环境既可用于构建 deb（dpkg-deb），也可用于构建 rpm（需另装 rpm 包提供 rpmbuild）。
 #
 # 用法（仓库根目录）：
 #   bash scripts/setup_linux.sh
@@ -51,7 +52,21 @@ echo "=== 国密算法自证（应全部 PASS） ==="
 .venv/bin/python -m app.gm
 
 echo
+echo "=== 打包工具链自检 ==="
+if command -v dpkg-deb >/dev/null 2>&1; then
+    echo "  dpkg-deb : 可用（可构建 deb）"
+else
+    echo "  dpkg-deb : 缺失（Debian 系通常自带）"
+fi
+if command -v rpmbuild >/dev/null 2>&1; then
+    echo "  rpmbuild : 可用（可构建 rpm）"
+else
+    echo "  rpmbuild : 缺失 —— 仅在需要 rpm 包时安装： sudo apt install -y rpm"
+fi
+
+echo
 echo "✅ 环境就绪"
 echo "   运行应用： .venv/bin/python main.py"
 echo "   冒烟测试： QT_QPA_PLATFORM=offscreen .venv/bin/python scripts/smoke_test.py"
-echo "   构建 deb： .venv/bin/python scripts/pack_deb.py"
+echo "   构建 deb： .venv/bin/python scripts/pack_deb.py   （或 ./一键打包.sh）"
+echo "   构建 rpm： .venv/bin/python scripts/pack_rpm.py   （或 ./一键打包.sh rpm）"

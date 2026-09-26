@@ -52,8 +52,9 @@ MAINTAINER = "工作考勤表 <193697875+baijiahei-code@users.noreply.github.com
 HOMEPAGE = "https://github.com/baijiahei-code/AttendanceDesktop"
 
 # Qt6 运行时依赖：Depends 只放"缺了必然起不来"的，可选的放 Recommends
-DEPENDS = ("libc6, libxcb-cursor0, libxkbcommon-x11-0, libgl1, libegl1, "
-           "libfontconfig1, libdbus-1-3")
+# ⚠ libc6 单独拼（要带版本下限，见 build_machine_glibc_version），故不写在这里
+DEPENDS_LIBS = ("libxcb-cursor0, libxkbcommon-x11-0, libgl1, libegl1, "
+                "libfontconfig1, libdbus-1-3")
 RECOMMENDS = ("libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, "
               "libxcb-xinerama0, libxcb-shape0, fonts-noto-cjk")
 
@@ -157,12 +158,15 @@ def dpkg_arch() -> str:
 
 
 def control_text(version: str, arch: str, installed_kb: int) -> str:
+    glibc = build_machine_glibc_version()
+    # libc6 带版本下限：产物是为构建机 glibc 打的，基线更低的系统应在安装时就被拒绝
+    libc6 = f"libc6 (>= {glibc})" if glibc else "libc6"
     return f"""Package: {PKG}
 Version: {version}
 Section: utils
 Priority: optional
 Architecture: {arch}
-Depends: {DEPENDS}
+Depends: {libc6}, {DEPENDS_LIBS}
 Recommends: {RECOMMENDS}
 Installed-Size: {installed_kb}
 Maintainer: {MAINTAINER}
@@ -313,11 +317,22 @@ def sm3_of(path: Path) -> tuple[str, str] | None:
 
 
 def build_machine_glibc() -> str:
-    """构建机 glibc 版本（决定产物的最低可安装基线）。"""
+    """构建机 glibc 版本（形如 "glibc 2.38"；决定产物的最低可安装基线）。"""
     try:
         return os.confstr("CS_GNU_LIBC_VERSION") or "未知"
     except (AttributeError, ValueError, OSError):
         return "未知"
+
+
+def build_machine_glibc_version() -> str:
+    """只取版本号（如 "2.38"）；探测失败返回空串。
+
+    PyInstaller 会把构建机的 ``libpython`` / ``libstdc++`` 等一并打进产物，所以产物的
+    glibc 需求**就等于构建机版本**。把它写进包的依赖声明后，基线更低的系统会在
+    **安装时**直接报依赖不满足，而不是装完运行才崩。
+    """
+    m = re.search(r"(\d+\.\d+(?:\.\d+)?)", build_machine_glibc())
+    return m.group(1) if m else ""
 
 
 def main() -> int:
@@ -347,7 +362,9 @@ def main() -> int:
     if re.search(r"2\.(3[5-9]|[4-9]\d)", glibc):
         print("  ⚠ 构建机 glibc 较新：产物的最低基线就是本机，**无法安装到**")
         print("     麒麟 V10 SP1(2.31) / UOS 20(2.28) 等旧系统。")
-        print("     如需覆盖旧基线：在 python:3.11-slim-bullseye(2.31) 容器内构建。")
+        print("     如需覆盖旧基线，必须**同时**做两件事（只换构建容器是无效的）：")
+        print("       ① 在更低 glibc 的容器内构建（bullseye=2.31 / buster=2.28）；")
+        print("       ② 把 PySide6 降到 ≤ 6.7（6.11 的 wheel 标签是 manylinux_2_34）。")
 
     print("\n[1/4] 清理")
     for d in (ROOT / "build", ROOT / "dist", BUILD_DIR):
