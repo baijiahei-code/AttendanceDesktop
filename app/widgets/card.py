@@ -114,6 +114,10 @@ class Card(QFrame):
             if hint:
                 s = QLabel(hint)
                 s.setObjectName("secHint")
+                # 允许换行：hint 文案往往很长（如「五险一金基数与比例…」），
+                # 不换行时它的 sizeHint 会成为整个卡片的最小宽度，导致窄窗口
+                # （笔记本 1366×768 等）下参数页挤不下、出现横向滚动条。
+                s.setWordWrap(True)
                 # hint 默认放最右侧靠左对齐；标题与 hint 之间留 stretch
                 head.addStretch(1)
                 head.addWidget(s)

@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QStandardPaths, Qt
-from PySide6.QtWidgets import QDoubleSpinBox, QLabel, QPushButton, QSizePolicy
+from PySide6.QtCore import QEvent, QStandardPaths, Qt
+from PySide6.QtWidgets import (QBoxLayout, QDoubleSpinBox, QLabel, QPushButton,
+                               QScrollArea, QSizePolicy, QWidget)
 
 from . import model
 
@@ -95,6 +96,81 @@ def set_lock_button_state(btn, locked: bool) -> None:
         btn.setText(LOCK_BTN_LOCKED_TEXT if locked else LOCK_BTN_UNLOCKED_TEXT)
     except RuntimeError:
         pass
+
+
+class ReflowScrollArea(QScrollArea):
+    """视口宽度变化时回调的 ``QScrollArea``（用于按可用宽度重排页面）。
+
+    回调在 **视口** 尺寸变化时触发（已扣除滚动条与边框），因此滚动条出现 /
+    消失引起的可用宽度变化也能被感知到。回调参数为视口宽度（逻辑像素）。
+
+    用途：参数页的 4 张卡片在窄窗口（笔记本）下需要由两列改为单列堆叠，
+    否则内容最小宽度超过可用宽度 → 横向滚动条 + 右列被裁掉。
+    """
+
+    def __init__(self, on_viewport_resized=None, parent=None):
+        super().__init__(parent)
+        self._on_viewport_resized = on_viewport_resized
+        if on_viewport_resized is not None:
+            self.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self.viewport() and event.type() == QEvent.Type.Resize:
+            cb = self._on_viewport_resized
+            if cb is not None:
+                cb(self.viewport().width())
+        return super().eventFilter(obj, event)
+
+
+class ResponsiveColumns(QWidget):
+    """两栏容器：宽度够时左右并排，不够时自动上下堆叠。
+
+    用于「主栏 + 侧栏」型页面（薪酬：工资项列表 + 加班/扣除卡；考勤：月历 + 当日编辑面板）。
+    侧栏一般带固定的最小宽度（280 / 300），并排所需宽度 = 主栏最小宽 + 间距 + 侧栏最小宽；
+    窗口比它窄时（1366×768 笔记本缩到最小宽度，或 1024×768 这类小屏）继续并排会撑出
+    横向滚动条、把右侧内容裁到看不见 —— 所以退化为纵向堆叠（内容占满整宽，只纵向滚动）。
+
+    可用宽度由外层滚动区通过 :meth:`apply` 送进来（见 ``MainWindow._register_responsive``）。
+    ⚠ 不能改用自身的 ``resizeEvent`` 判断：``setWidgetResizable(True)`` 下内容宽度被自己的
+    ``minimumSizeHint`` 顶住，页面永远观察不到「太窄」，恰好漏掉要修的场景。
+    """
+
+    # 宽度滞回：从堆叠切回并排需要多出这么多像素，避免滚动条出现/消失导致来回抖
+    HYSTERESIS = 16
+
+    def __init__(self, primary: QWidget, secondary: QWidget, spacing: int = 14,
+                 parent: QWidget | None = None):
+        super().__init__(parent)
+        self._primary = primary
+        self._secondary = secondary
+        self._spacing = spacing
+        self._stacked: bool | None = None
+        lay = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(spacing)
+        lay.addWidget(primary, 1)   # 主栏吃满剩余宽度 / 高度
+        lay.addWidget(secondary, 0)
+        self._lay = lay
+
+    @property
+    def stacked(self) -> bool:
+        """当前是否为上下堆叠（供测试 / 调试查看）。"""
+        return bool(self._stacked)
+
+    def needed_width(self) -> int:
+        """并排所需的最小宽度（按子件最小宽度实时算，字体 / DPI 变化也正确）。"""
+        return (self._primary.minimumSizeHint().width() + self._spacing
+                + self._secondary.minimumSizeHint().width())
+
+    def apply(self, available_width: int) -> None:
+        """按可用宽度决定并排 / 堆叠；排列方式没变时直接返回（不重排）。"""
+        limit = self.needed_width() + (self.HYSTERESIS if self._stacked else 0)
+        stacked = available_width < limit
+        if stacked == self._stacked:
+            return
+        self._stacked = stacked
+        self._lay.setDirection(QBoxLayout.Direction.TopToBottom if stacked
+                               else QBoxLayout.Direction.LeftToRight)
 
 
 def make_lock_banner(parent=None) -> QLabel:

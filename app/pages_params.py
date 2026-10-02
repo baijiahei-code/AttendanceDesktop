@@ -47,7 +47,8 @@ class ParamsPageMixin:
         ttl = QLabel("参数模板")
         ttl.setObjectName("cardTitle")
         self.tpl_combo = QComboBox()
-        self.tpl_combo.setMinimumWidth(230)
+        # 180 只是下限（内容更宽时仍会自动变宽）；设太大在窄窗口会顶宽整张卡片
+        self.tpl_combo.setMinimumWidth(180)
         save_tpl = QPushButton("存为模板…")
         save_tpl.clicked.connect(self._save_template)
         rename_tpl = QPushButton("重命名")
@@ -69,6 +70,7 @@ class ParamsPageMixin:
         apply_tpl.clicked.connect(self._apply_template)
         hint_tpl = QLabel("整组参数存为模板，新建月份 / 换人时一键套用")
         hint_tpl.setObjectName("secHint")
+        hint_tpl.setWordWrap(True)  # 窄窗口时换行，不撑大卡片最小宽度
         tpl_inner.addWidget(ttl)
         tpl_inner.addWidget(self.tpl_combo)
         tpl_inner.addWidget(save_tpl)
@@ -91,7 +93,7 @@ class ParamsPageMixin:
         # —— 主题卡（对齐高保真原型：社保公积金 / 工资与工时 / 计薪与请假 / 合规判定）——
         self._param_spins = {}
         cards = QGridLayout()
-        cards.setHorizontalSpacing(14)
+        cards.setHorizontalSpacing(self._PARAMS_COL_SPACING)
         cards.setVerticalSpacing(12)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
@@ -99,14 +101,59 @@ class ParamsPageMixin:
         wage_card = self._make_wage_card()
         leave_card = self._make_leave_card()
         note_card = self._make_note_card(b)
-        cards.addWidget(social_card, 0, 0)
-        cards.addWidget(wage_card, 0, 1)
-        cards.addWidget(leave_card, 1, 0)
-        cards.addWidget(note_card, 1, 1)
+        self._params_grid = cards
+        self._params_grid_cards = [social_card, wage_card, leave_card, note_card]
+        for i, c in enumerate(self._params_grid_cards):
+            cards.addWidget(c, i // 2, i % 2)
+        # 先按两列摆放；紧接着按当前可用宽度修正（窄窗口自动改单列）
+        self._params_one_col = False
         lay.addLayout(cards)
         lay.addStretch(1)
         # 4 张内容卡 + 1 张工具条卡
         self._params_cards.extend([social_card, wage_card, leave_card, note_card])
+        # 小屏笔记本：可用宽度放不下两列时改单列，避免横向滚动条裁掉右列卡片
+        # （窗口 / 视口尺寸变化时由主窗口 _apply_responsive_layouts 再次修正）
+        self._register_responsive(self.params_scroll, self._reflow_params_cards)
+
+    # 参数卡两列布局的列间距（与 _fill_params 里的 QGridLayout 保持一致）
+    _PARAMS_COL_SPACING = 14
+
+    def _reflow_params_cards(self, viewport_width: int | None = None):
+        """按可用宽度在「两列 / 单列」之间切换 4 张参数卡的排列方式。
+
+        参数页两列摆放时的最小宽度 = 左列最宽卡 + 列间距 + 右列最宽卡 + 外边距，
+        在 1366×768 / 1280×800 这类笔记本上会超过窗口可用宽度 → 出现横向滚动条、
+        右侧卡片被裁掉。这里改为：宽度不足时退化成单列纵向堆叠（内容整宽，只纵向滚动）。
+
+        判定阈值不写死像素，而是按卡片自身的 ``minimumSizeHint()`` 实时计算 ——
+        字体 / 显示缩放（DPI）变化时判断依然正确。
+        """
+        grid = getattr(self, "_params_grid", None)
+        cards = getattr(self, "_params_grid_cards", None)
+        if grid is None or not cards:
+            return  # 参数页尚未构建
+        if viewport_width is None:
+            scroll = getattr(self, "params_scroll", None)
+            viewport_width = scroll.viewport().width() if scroll is not None else 0
+        # 左列 = card[0]/card[2]，右列 = card[1]/card[3]
+        col_min = [max(cards[c].minimumSizeHint().width(),
+                       cards[c + 2].minimumSizeHint().width()) for c in (0, 1)]
+        # ⚠ 必须把「页根布局 + 网格自身」的左右边距算进去：只算两张卡的宽度会少算
+        # 40px（页边距 20×2），结果在 940~978 这段宽度上仍保持两列 → 横向滚动条
+        m_root = self._params_lay.contentsMargins()
+        m_grid = grid.contentsMargins()
+        two_col_min = (m_root.left() + m_grid.left() + col_min[0]
+                       + grid.horizontalSpacing() + col_min[1]
+                       + m_grid.right() + m_root.right())
+        one_col = viewport_width < two_col_min
+        if one_col == getattr(self, "_params_one_col", None):
+            return  # 排列方式未变，避免每次 resize 都重排
+        self._params_one_col = one_col
+        for c in cards:
+            grid.removeWidget(c)
+        grid.setColumnStretch(1, 0 if one_col else 1)
+        for i, c in enumerate(cards):
+            grid.addWidget(c, i if one_col else i // 2, 0 if one_col else i % 2)
 
     def _set_params_locked(self, locked: bool):
         """锁定只读模式：所有 Card.set_locked 统一禁用内部控件 + 工具条独立禁用。"""

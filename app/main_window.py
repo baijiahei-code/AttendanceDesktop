@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from . import calc, crypto, model, worker
 from .storage import MonthStore
 from .style import STYLE
-from .ui import PAGES, PAGE_TITLES
+from .ui import PAGES, PAGE_TITLES, ReflowScrollArea
 from .pages_annual import AnnualPageMixin
 from .pages_calendar import CalendarPageMixin
 from .pages_overview import OverviewPageMixin
@@ -33,6 +33,9 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
     def __init__(self, store: MonthStore):
         super().__init__()
         self.store = store
+        # 需要「按可用宽度自适应」的两栏容器：id(滚动区) -> (滚动区, [容器, ...])
+        # 页面填充时用 _register_responsive 覆盖登记，窗口尺寸变化时统一 apply
+        self._responsive: dict[int, tuple] = {}
         self._book: model.MonthBook | None = None
         self._loading = False
         self._last_result = None
@@ -77,6 +80,34 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         self._go(today.year, today.month)
         self._refresh_history()
         self._show_page(0)
+
+    def _register_responsive(self, area: QScrollArea, target) -> None:
+        """登记一个「按可用宽度自适应」的对象（两栏容器或重排回调）。
+
+        页面每次重建（首次进入 / 切月）都会重新登记，旧对象随之作废。
+        ``target`` 可以是带 ``apply(width)`` 的 widget（:class:`ResponsiveColumns`），
+        也可以直接是 ``回调(width)``（参数页的两列↔单列重排）。
+        """
+        self._responsive[id(area)] = (area, [target])
+        self._apply_responsive_layouts()
+        # 页面是在 __init__ 里一次性建好的，那时窗口/布局还没定型（视口宽度是默认值）
+        # → 下一轮事件循环等布局定型后再摆一次，避免宽屏上误判成「太窄」
+        QTimer.singleShot(0, self._apply_responsive_layouts)
+
+    def _apply_responsive_layouts(self) -> None:
+        """把所有已登记对象按各自滚动区的当前视口宽度摆一次。"""
+        for area, targets in getattr(self, "_responsive", {}).values():
+            width = area.viewport().width()
+            for t in targets:
+                try:
+                    t(width) if callable(t) else t.apply(width)
+                except RuntimeError:  # 页面已重建，旧对象正在销毁
+                    pass
+
+    def resizeEvent(self, event):
+        """窗口尺寸变化时，把新的可用宽度转给自适应对象（并排 ↔ 堆叠）。"""
+        super().resizeEvent(event)
+        self._apply_responsive_layouts()
 
     def _build_ui(self):
         root = QWidget()
@@ -256,6 +287,8 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
                 self._flush_changed()
             self.stack.setCurrentIndex(idx)
             self._current_page_idx = idx
+            # 切页后按新的视口宽度重算一次自适应布局（隐藏期间视口可能变过）
+            self._apply_responsive_layouts()
             for i, b in enumerate(self.nav_btns):
                 b.setChecked(i == idx)
             title, sub = PAGE_TITLES[key]
@@ -616,7 +649,9 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
             self.stack.removeWidget(w)
             w.deleteLater()
         # params
-        self.params_scroll = QScrollArea()
+        # params：视口宽度变化时回调，让参数卡在「两列 / 单列」之间自适应
+        # （1366×768 等笔记本上两列放不下，会撑出横向滚动条并裁掉右列）
+        self.params_scroll = ReflowScrollArea(self._reflow_params_cards)
         self.params_scroll.setWidgetResizable(True)
         self.params_scroll.setFrameShape(QFrame.NoFrame)
         self.params_root = QWidget()

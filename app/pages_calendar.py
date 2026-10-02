@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
 )
 
 from . import model, wages, worker
-from .ui import (DAY_PALETTE, STATUS_ORDER, NumberSpin, make_lock_banner,
-                 set_busy_button, show_lock_banner)
+from .ui import (DAY_PALETTE, STATUS_ORDER, NumberSpin, ResponsiveColumns,
+                 make_lock_banner, set_busy_button, show_lock_banner)
 from .widgets import Card
 
 
@@ -85,9 +85,6 @@ class CalendarPageMixin:
             cg.addWidget(lab, i // 5, i % 5)
         lay.addLayout(cg)
 
-        row = QHBoxLayout()
-        row.setSpacing(14)
-
         # —— 月历卡片（Card 化）——
         cal_card = Card(title=f"考勤 · {b.year} 年 {b.month} 月",
                         variant="default", margins=(14, 12, 14, 12))
@@ -106,14 +103,16 @@ class CalendarPageMixin:
             leg.addWidget(lab)
         leg.addStretch(1)
         cv.addLayout(leg)
-        row.addWidget(cal_card, 1)
         self._calendar_cards.append(cal_card)
 
         # —— 右侧当日编辑面板（Card 化）——
         self.sel_day = 0
         self.edit_panel = self._build_day_panel()
-        row.addWidget(self.edit_panel, 0)
-        lay.addLayout(row, 1)
+        # 两栏（左 月历 / 右 当日面板）：窄窗口自动改上下堆叠，
+        # 否则月历最小宽 + 面板最小宽（280）会把右栏挤出可视区
+        self._calendar_body = ResponsiveColumns(cal_card, self.edit_panel)
+        lay.addWidget(self._calendar_body, 1)
+        self._register_responsive(self.calendar_area, self._calendar_body)
         # 编辑面板也是 Card，参与统一锁定
         self._calendar_cards.append(self.edit_panel)
         # 收集右侧面板所有可写控件（Card 已自动追踪，这里保留兼容旧 API）

@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
 )
 
 from . import model
-from .ui import make_lock_banner, set_field_locked, set_lock_button_state, show_lock_banner
+from .ui import (ResponsiveColumns, make_lock_banner, set_field_locked,
+                 set_lock_button_state, show_lock_banner)
 from .widgets import (
     DeductionCardWidget, OvertimeCardWidget, PayItemListWidget, SalaryStripWidget,
 )
@@ -52,10 +53,8 @@ class SalaryPageMixin:
         lay.addWidget(self._salary_strip)
 
         # —— 两栏：左 工资项；右 加班+扣除 ——
-        body = QHBoxLayout()
-        body.setSpacing(14)
-
-        # 左：工资项列表卡片
+        # 用 ResponsiveColumns：窗口放不下两栏时（笔记本缩到最小宽度、1024 小屏）
+        # 自动改成上下堆叠，否则右栏会被挤出可视区（工资项列表最小宽 + 侧栏 300 ≈ 805）
         self.pay_items = PayItemListWidget()
         self.pay_items.changed.connect(self._pi_touched)
         self.pay_items.copy_requested.connect(self._on_copy_pay_items)
@@ -63,7 +62,6 @@ class SalaryPageMixin:
             lambda _i: self._focus_new_row(self.pay_items))
         self.pay_items.set_add_callback(self._add_pay_item_at_back_of_type)
         self.pay_items.set_remove_callback(self._on_pay_item_removed)
-        body.addWidget(self.pay_items, 1)
 
         # 右：加班 / 个人扣除
         right = QWidget()
@@ -78,9 +76,10 @@ class SalaryPageMixin:
         rv.addWidget(self._ot_card)
         rv.addWidget(self._ded_card)
         rv.addStretch(1)
-        body.addWidget(right, 0)
 
-        lay.addLayout(body, 1)
+        self._salary_body = ResponsiveColumns(self.pay_items, right)
+        lay.addWidget(self._salary_body, 1)
+        self._register_responsive(self.salary_area, self._salary_body)
 
         # —— 给所有 spin / 复选框接联动：写回 book + 触发刷新 ——
         self._salary_spins: dict = {}
