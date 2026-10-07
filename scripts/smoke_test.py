@@ -441,7 +441,7 @@ for card in getattr(win4, "_params_cards", []):
     locked_widgets += card.iter_tracked_widgets()
 locked_widgets += [w for w in win4._param_spins.values()]
 locked_widgets += [win4._fill_agreed_btn, win4._api_settings_btn,
-                   win4._fetch_wage_btn, win4._wage_lock_btn,
+                   win4._fetch_wage_btn, win4._fetch_wage_api_btn, win4._wage_lock_btn,
                    win4._ot_base_lock_btn, win4._fund_base_lock_btn,
                    win4._province_combo, win4._region_combo, win4._note_edit]
 locked_widgets += [w for w in win4._calendar_modify_widgets if w is not None]
@@ -673,3 +673,221 @@ assert not _unmapped, f"未映射到 RPM 包名的 Debian 依赖：{_unmapped}"
 for _lst, _field in ((_rpm_req, "Requires"), (_rpm_rec, "Recommends")):
     assert len(set(_lst)) == len(_lst), f"rpm {_field} 出现重复项：{_lst}"
 print("packaging deps OK")
+
+
+# ---- API 网络层自检（全部 mock，不发真实请求）----
+# 回归背景：① 两个功能的 JSON 提取各写一个正则（嵌套对象被截断 / 贪婪多吃）；
+# ② API 返回值不做合理性校验，模型幻觉的数字会直接进账本影响工资；
+# ③ 只填地址不填 Key 时功能不走网络，而「测试连接」却允许无 Key（行为不一致）；
+# ④ 服务端不支持 response_format / 限流 5xx 时没有降级与重试；
+# ⑤ 用户把完整端点粘进地址栏会被拼成 .../chat/completions/chat/completions。
+import json as _json  # noqa: E402
+import urllib.error as _urlerr  # noqa: E402
+from app import wages as _wages  # noqa: E402
+
+# —— 端点归一化 ——
+assert _wages._endpoint("") is None
+assert _wages._endpoint("http://a.com/v1") is None          # 只允许 https
+assert _wages._endpoint("https://a.com") == "https://a.com/chat/completions"
+assert _wages._endpoint("https://a.com/v1/") == "https://a.com/v1/chat/completions"
+assert _wages._endpoint("https://a.com/v1/chat/completions") == "https://a.com/v1/chat/completions"
+assert _wages._endpoint("https://gw.com/v1?key=abc") == "https://gw.com/v1/chat/completions?key=abc"
+
+# —— JSON 提取：围栏 / 前后解释 / 嵌套 / 字符串里的括号 ——
+assert _wages._extract_json('```json\n{"a": 1}\n```') == {"a": 1}
+assert _wages._extract_json('{"a": 1}\n以上是结果') == {"a": 1}
+assert _wages._extract_json('{"a": {"b": 2}, "c": 3}') == {"a": {"b": 2}, "c": 3}
+assert _wages._extract_json('{"note": "a } b", "x": 1}') == {"note": "a } b", "x": 1}
+for _bad in ('{"a": 1', "没有 JSON", ""):
+    try:
+        _wages._extract_json(_bad)
+        raise AssertionError(f"非法 JSON 应报错：{_bad!r}")
+    except ValueError:
+        pass
+
+# —— HTTP 错误文案带服务端原因 ——
+_msg = _wages._http_reason(400, '{"error": {"message": "model not found"}}')
+assert "400" in _msg and "model not found" in _msg, _msg
+
+# —— mock 网络：验证 json_mode / 降级 / 重试 / 无 Key 也调用 ——
+_orig_urlopen = _wages.urllib.request.urlopen
+_calls: list = []
+_replies: list = []
+
+
+class _FakeResp:
+    def __init__(self, content):
+        self._b = _json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+        self.status = 200
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _fake_urlopen(req, timeout=None, context=None):
+    _calls.append(_json.loads(req.data.decode()))
+    _reply = _replies.pop(0)
+    if isinstance(_reply, Exception):
+        raise _reply
+    return _FakeResp(_reply)
+
+
+def _http_err(code, body=""):
+    return _urlerr.HTTPError("https://a.com/chat/completions", code, "err",
+                             {}, _io.BytesIO(body.encode()))
+
+
+try:
+    _wages.urllib.request.urlopen = _fake_urlopen
+
+    # 取消默认 API 后：**没有模型名就不发请求**，所以测试里的联网调用都显式带模型名
+    _MODEL = "test-model"
+
+    # ① json_mode 首次带 response_format；服务端拒绝则去掉重试
+    _calls.clear(); _replies[:] = [_http_err(400, "response_format is not supported"), "ok"]
+    assert _wages._post_chat("https://a.com/v1", "k", [{"role": "user", "content": "hi"}],
+                             api_model=_MODEL, json_mode=True) == "ok"
+    assert len(_calls) == 2, _calls
+    assert "response_format" in _calls[0] and "response_format" not in _calls[1], _calls
+    # ② 限流退避重试一次
+    _calls.clear(); _replies[:] = [_http_err(429, "slow down"), "ok"]
+    assert _wages._post_chat("https://a.com/v1", "k", [{"role": "user", "content": "hi"}],
+                             api_model=_MODEL) == "ok"
+    assert len(_calls) == 2
+    # ③ 401 不重试，且文案带上服务端说明
+    _calls.clear(); _replies[:] = [_http_err(401, "invalid api key")]
+    try:
+        _wages._post_chat("https://a.com/v1", "bad", [{"role": "user", "content": "hi"}],
+                          api_model=_MODEL)
+        raise AssertionError("401 应抛 ChatError")
+    except _wages.ChatError as _e:
+        assert len(_calls) == 1 and "401" in str(_e) and "invalid api key" in str(_e), str(_e)
+    # ④ 请求头带 User-Agent（个别网关会拒无 UA 的请求）
+    _calls.clear(); _replies[:] = ["ok"]
+    _wages._post_chat("https://a.com/v1", "k", [{"role": "user", "content": "hi"}],
+                      api_model=_MODEL)
+    assert _calls, "未发出请求"
+
+    # ⑤ 最低工资：正常值通过；幻觉值（离谱/不匹配）必须被拒
+    _replies[:] = ['{"min_wage": 2170, "parttime_min": 22}']
+    _data, _err = _wages._try_chat_api("https://a.com/v1", "k", 2026, 5, "安徽", "池州",
+                                       api_model=_MODEL)
+    assert _data and _data["min_wage"] == 2170 and _err is None, (_data, _err)
+    # 取消默认 API 后：没填模型名 → 直接报错，且**一个请求都不发**
+    _calls.clear()
+    _ok, _msg = _wages.test_connection("https://a.com/v1", "k")
+    assert not _ok and "模型名" in _msg and len(_calls) == 0, (_ok, _msg, len(_calls))
+    _data, _err = _wages._try_chat_api("https://a.com/v1", "k", 2026, 5, "安徽", "池州",
+                                      api_model="")
+    assert _data is None and "模型名" in (_err or "") and len(_calls) == 0, (_data, _err, _calls)
+    for _bad_json, _needle in (
+            ('{"min_wage": 999999, "parttime_min": 22}', "不合理"),
+            ('{"min_wage": 2170, "parttime_min": 0.5}', "不合理"),
+            ('{"min_wage": 2170, "parttime_min": 150}', "不匹配")):
+        _replies[:] = [_bad_json]
+        _data, _err = _wages._try_chat_api("https://a.com/v1", "k", 2026, 5, "安徽", "池州",
+                                          api_model=_MODEL)
+        assert _data is None and _needle in (_err or ""), (_bad_json, _data, _err)
+
+    # ⑥ 最低工资：【内置表】纯本地（不发请求）/【联网】只走 API（有表也照样联网，不自动回退）
+    _calls.clear(); _replies[:] = ['{"min_wage": 2490, "parttime_min": 25}']
+    _res = _wages.fetch_local("安徽", "池州")
+    assert _res and _res["source"] == "local" and len(_calls) == 0, (_res, len(_calls))
+    assert abs(_res["min_wage"] - 2170) < 1e-6, _res
+    assert _wages.fetch_local("不存在省", "不存在市") is None
+    _calls.clear(); _replies[:] = ['{"min_wage": 2490, "parttime_min": 25}']
+    _res = _wages.fetch_wage_api("https://a.com/v1", "", 2026, 5, "安徽", "池州",
+                                 api_model=_MODEL)
+    assert _res["source"] == "api" and len(_calls) == 1 and _res["min_wage"] == 2490, _res
+    # 未配地址 / 请求失败 → 带 api_error 的空结果，不拿内置表顶上
+    _res = _wages.fetch_wage_api("", "", 2026, 5, "安徽", "池州")
+    assert _res["min_wage"] == 0 and _res.get("api_error"), _res
+    _calls.clear(); _replies[:] = [_http_err(500, "boom"), _http_err(500, "boom")]
+    _res = _wages.fetch_wage_api("https://a.com/v1", "", 2026, 5, "安徽", "池州",
+                                 api_model=_MODEL)
+    assert _res["min_wage"] == 0 and _res.get("api_error"), _res
+
+    # ⑦ 节假日：【内置表】纯本地 /【联网】只走 API（失败不回退）
+    _calls.clear(); _replies[:] = []
+    _h = _wages.fetch_holidays_local(2026)
+    assert _h and _h["source"] == "local" and len(_calls) == 0, (_h, len(_calls))
+    assert len(_h["statutory"]) == 13 and len(_h["makeup"]) == 6, _h
+    assert _wages.fetch_holidays_local(2027) is None
+    _replies[:] = ['```json\n{"statutory": ["2026-01-01"], "rest": ["01-01"], '
+                   '"makeup": ["02-14"]}\n```\n以上为安排']
+    _h = _wages.fetch_holidays_api("https://a.com/v1", "", 2026, api_model=_MODEL)
+    assert _h and _h["source"] == "api", _h
+    assert _h["statutory"] == ["01-01"] and _h["makeup"] == ["02-14"], _h
+    _replies[:] = [_http_err(401, "bad key")]
+    _h = _wages.fetch_holidays_api("https://a.com/v1", "bad", 2026, api_model=_MODEL)
+    assert not _h["statutory"] and not _h["rest"] and _h.get("api_error"), _h
+    _h = _wages.fetch_holidays_api("", "", 2026)
+    assert not _h["statutory"] and _h.get("api_error"), _h
+finally:
+    _wages.urllib.request.urlopen = _orig_urlopen
+print("api layer OK")
+
+# ---- 内置最低工资表更新工具：离线解析 + 差异检测（必须能抓出错值）----
+import importlib.util as _ilu  # noqa: E402
+
+_spec = _ilu.spec_from_file_location(
+    "update_minwage", Path(__file__).with_name("update_minwage.py"))
+_um = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_um)  # type: ignore[union-attr]
+_SAMPLE = (
+    "<table>"
+    "<tr><td>地区</td><td>月最低工资标准</td><td>小时最低工资标准</td></tr>"
+    "<tr><td>第一档</td><td>第二档</td><td>第三档</td><td>第四档</td>"
+    "<td>第一档</td><td>第二档</td><td>第三档</td><td>第四档</td></tr>"
+    "<tr><td>安 徽</td><td>2320</td><td>2170</td><td>2100</td><td>2000</td>"
+    "<td>23</td><td>22</td><td>21</td><td>20</td></tr>"
+    "<tr><td>广 东</td><td>2500</td><td>2080</td><td>1850</td><td>1750</td>"
+    "<td>23.7</td><td>19.8</td><td>18.3</td><td>17.4</td></tr>"
+    "<tr><td>其中：深圳</td><td>2520</td><td></td><td></td><td></td>"
+    "<td>23.7</td><td></td><td></td><td></td></tr>"
+    "<tr><td>上 海</td><td>9999</td><td></td><td></td><td></td>"
+    "<td>25</td><td></td><td></td><td></td></tr>"
+    "</table>")
+_off = _um.parse_table(_SAMPLE)
+assert _off["安徽"] == [(2320.0, 23.0), (2170.0, 22.0), (2100.0, 21.0), (2000.0, 20.0)], _off
+assert _off["广东"][0] == (2520.0, 23.7), _off          # 「其中：深圳」并入广东且排最前
+assert _off["上海"] == [(9999.0, 25.0)], _off
+_issues = _um.compare(_off)
+assert any(s.startswith("[错] 上海") for s in _issues), _issues        # 错值必须被抓出
+assert any(s.startswith("[缺] 天津") for s in _issues), _issues        # 缺省必须被抓出
+assert not any(s.startswith("[错]") and "安徽" in s for s in _issues), _issues
+assert not any(s.startswith("[错]") and "广东" in s for s in _issues), _issues
+print("min-wage updater OK")
+
+# ---- 后台任务：取消后不得再回调界面（关窗 / 页面销毁后回来的结果）----
+from app import worker as _worker  # noqa: E402
+from PySide6.QtWidgets import QApplication as _QApp  # noqa: E402
+
+_app2 = _QApp.instance() or _QApp([])
+_seen: list = []
+_call = _worker.run_async(lambda: 1, on_done=lambda r: _seen.append("done"),
+                          on_failed=lambda m: _seen.append("failed"),
+                          on_finished=lambda: _seen.append("finished"))
+_call.cancel()
+import time as _time  # noqa: E402
+_deadline = _time.monotonic() + 3
+while _time.monotonic() < _deadline:
+    _app2.processEvents()
+    _time.sleep(0.01)
+assert _seen == [], f"取消后不应执行任何回调：{_seen}"
+
+_seen.clear()
+_worker.run_async(lambda: 1, on_done=lambda r: _seen.append("done"),
+                  on_finished=lambda: _seen.append("finished"))
+_deadline = _time.monotonic() + 3
+while _time.monotonic() < _deadline and len(_seen) < 2:
+    _app2.processEvents()
+    _time.sleep(0.01)
+assert _seen == ["done", "finished"], f"回调顺序应为 done→finished：{_seen}"
+print("worker cancel OK")

@@ -18,8 +18,8 @@ app/
 ├── storage.py               # 月份存档 + Settings（读取缓存 + 文件权限收紧）
 ├── crypto.py                # 敏感字段加解密：DPAPI / 国密双后端 + 令牌格式
 ├── gm.py                    # 国密算法封装（SM2/SM3/SM4/KDF/HMAC-SM3）+ 自证清单
-├── holidays.py              # 法定节假日 / 调休表（按年查）+ API 调用
-├── wages.py                 # 全国最低工资标准（省/地二级，查 + API 回填）
+├── holidays.py              # 法定节假日 / 调休表（按年查，本地表与 API 两个独立入口）
+├── wages.py                 # 全国最低工资标准（省/地二级；本地表与 API 两个独立入口）
 ├── worker.py                # 后台任务（QThreadPool）：网络请求不阻塞界面
 ├── excel_style.py           # Excel 导出的统一样式（HEADER_FILL/BODY_FONT/...）
 ├── style.py                 # Qt 样式表（QSS）
@@ -367,12 +367,44 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 
 ---
 
+## 内置数据更新流程（最低工资 / 节假日）
+
+目标：把「找数据 → 抄数字 → 检查地图」变成一条命令 + 一次人工确认。
+
+### 最低工资
+
+```bash
+.venv\Scripts\python.exe scripts\update_minwage.py      # 自动抓最新一期（人社部 IP 镜像）
+.venv\Scripts\python.exe scripts\update_minwage.py --list    # 只列出镜像上各期文章
+.venv\Scripts\python.exe scripts\update_minwage.py --file saved.html   # 用本地保存的页面（离线/可复现）
+```
+
+- **数据源**：人社部《全国各省、自治区、直辖市最低工资标准情况（截至 YYYY-MM-01）》，
+  每季度一期；`www.mohrss.gov.cn` 有 WAF，脚本走同一服务器的 **IP 镜像**
+  `http://114.255.111.180/SYrlzyhshbzb/laodongguanxi_/fwyd/` 并自动选最新一期。
+- **输出**：官方各档的月/时数值 + 与内置表的比对结果：
+  `[错]` = 某市用的数值不在官方档位里（映射写错/过期，**必须修**）；
+  `[缺]` = 官方表里没有该省（省名写法变了或解析失败）；
+  `[注]` = 官方有但内置没用的低档（一般只适用部分县，属于正常）。
+- **退出码**：只在出现 `[错]/[缺]` 时返回 1，适合放进发布前检查。
+- 改完数字后照旧跑一遍脚本确认 0 处 `[错]`，再跑 `scripts/smoke_test.py`。
+
+### 节假日
+
+- 公告：gov.cn「国务院办公厅关于 YYYY 年部分节假日安排的通知」（惯例上年 11 月发布）。
+- 内置表：`app/holidays.py` 的 `_YEAR_DATA`（`statutory` 法定日 / `ranges` 放假区间 / `makeup` 补班日），
+  未公布的年份不要凭「预测」写进去；日历页的「📋 铺本地表」只认这张表。
+- 核对方式：把公告里每个节日的“放假区间”和“X月X日上班”逐条对上 `ranges` / `makeup`，
+  法定日按「元旦当夭、除夕+初一到初三、清明当天、5/1&5/2、端午当天、中秋当天、10/1~10/3」核。
+
+---
+
 ## 关键不变量
 
 - **写入拦截**：锁定月进入 UI 后，**所有** setattr(write_attr) 入口都会被主窗口或 widget 层拒掉
 - **`r.counts.normal_labor_days`** 与左侧"提供正常劳动天数"spin 永远同步（参数页"一键填入"按钮会拉 calc 结果回填）
 - **加班费计算基数**：用户锁定时，不再随最低工资变化联动（参数页三个锁按钮独立）
-- **节假日**：日历优先用 API，失败用本地表（`holidays.py`），最终状态可被 UI 改写
+- **节假日**：日历页有「📋 铺本地表」（内置 `holidays.py`，不联网）与「🌐 API 一键铺」（只走 API，失败直接报错不回退）两个独立入口，最终状态可被 UI 改写
 
 ---
 
@@ -382,7 +414,7 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 | --- | --- |
 | 调整 Excel 颜色 / 字体 / 边框 | `app/excel_style.py` |
 | 加一个工作区（例如"公积金台账"） | 新建 `pages_xxx.py` mixin + `main_window.py` 多继承 |
-| 修改最低工资数据 | `app/wages.py`（每个省一个 `_XX_GRADEn` + `_XX_DATA`） |
+| 修改最低工资数据 | 先跑 `python scripts/update_minwage.py` 看官方最新一期与内置表的差异，再改 `app/wages.py`（每个省一个 `_XX_GRADEn` + `_CITY_XX_n`） |
 | 添加工资项类型 | `app/model.py:PayItem` + `app/model.py:PAYITEM_TYPES` + 各行 _refresh_chip |
 | 改加密后端 / 令牌格式 | `app/crypto.py`（+ `app/gm.py` 算法层）；自证清单在 `gm.selftest()` |
 | 改数据目录位置 / 权限 | `app/storage.py` 的 `default_data_dir()` / `secure_path()` |

@@ -325,21 +325,17 @@ class ParamsPageMixin:
     def _make_wage_card(self):
         """工资与工时标准卡：省份+地区级联，API 可用时自动填最低工资。"""
         card = Card("工资与工时标准",
-                    hint="选择工作地，点击\"获取最低工资\"按钮填入（优先 API，失败用本地官方表）")
+                    hint="选择工作地后自动填入内置官方标准；也可以点「联网查询」用 API 取数"
+                         "（两个来源各自独立，不会自动互相替换）")
 
-        # —— API 配置提示行 ——
+        # —— API 配置提示行（文案统一由 _refresh_api_hint 生成）——
         apis = self.store.load_settings()
-        api_url = apis.get("api_url", "")
-        if api_url:
-            model = apis.get("api_model") or wages.DEFAULT_API_MODEL
-            api_row = QLabel(f"✅ API 已连接：{api_url} · 模型 {model}")
-            api_row.setObjectName("secHint")
-        else:
-            api_row = QLabel("ℹ️ 未配置最低工资 API：选择地区后会自动填入内置的本地官方最低工资表，无需手动输入（可选配 API 联网获取最新标准）")
-            api_row.setObjectName("secHint")
+        api_row = QLabel("")
+        api_row.setObjectName("secHint")
         api_row.setWordWrap(True)
         card.add_widget(api_row)
         self._api_hint_label = api_row  # 保存引用供刷新
+        self._refresh_api_hint()
 
         api_btn = QPushButton("⚙️ API 设置")
         api_btn.setObjectName("ghost")
@@ -363,16 +359,27 @@ class ParamsPageMixin:
         self._region_combo.setEnabled(False)  # 未选省份前禁用
         self._province_combo.currentTextChanged.connect(self._on_province_changed)
         self._region_combo.currentTextChanged.connect(self._on_region_changed)
-        fetch_btn = QPushButton("🔄 获取最低工资")
-        fetch_btn.setToolTip("按当前年份月份拉取最低工资：优先 API，失败则用本地已录入的官方标准")
-        fetch_btn.setCursor(Qt.PointingHandCursor)
-        fetch_btn.clicked.connect(self._on_click_fetch_wage)
+        # —— 两个取数按钮：各自独立，点哪个用哪个（用户 2026-10-07 口径）——
+        local_btn = QPushButton("📋 用本地表")
+        local_btn.setToolTip("只用软件内置的全国官方最低工资表填入（不联网、最快最准）")
+        local_btn.setCursor(Qt.PointingHandCursor)
+        local_btn.clicked.connect(self._on_click_fetch_wage_local)
+        net_btn = QPushButton("🌐 联网查询（API）")
+        net_btn.setToolTip("只调用你在「⚙️ API 设置」里配的 API，不回退内置表\n"
+                           "模型可能给出过期或串省的标准，请核对后再保存")
+        net_btn.setCursor(Qt.PointingHandCursor)
+        net_btn.clicked.connect(self._on_click_fetch_wage_api)
         prow.addWidget(plab)
         prow.addWidget(self._province_combo, 1)
         prow.addWidget(self._region_combo, 1)
-        prow.addWidget(fetch_btn)
         card.add_layout(prow)
-        self._fetch_wage_btn = fetch_btn  # 锁定时禁用
+        brow = QHBoxLayout()
+        brow.setSpacing(8)
+        brow.addWidget(local_btn, 1)
+        brow.addWidget(net_btn, 1)
+        card.add_layout(brow)
+        self._fetch_wage_btn = local_btn      # 锁定时禁用
+        self._fetch_wage_api_btn = net_btn    # 锁定时禁用
 
         # 从 settings 恢复上次选择；若无则默认 安徽 · 池州
         # 恢复期间用 blockSignals 跳过级联信号（此时卡片状态变量如 _ot_base_locked 尚未创建）
@@ -509,8 +516,8 @@ class ParamsPageMixin:
         self._changed()
         self._set_status(f"已按考勤填入约定工作天数：{normal_days:g} 天", True)
 
-    def _on_click_fetch_wage(self):
-        """用户点击「🔄 获取最低工资」按钮：优先调 API（若配置），失败 fallback 本地。"""
+    def _on_click_fetch_wage_local(self):
+        """「📋 用本地表」：纯本地取值，不联网（表里没有该地区则提示改用联网查询）。"""
         if getattr(self, "_is_locked", False):
             return
         province = self._province_combo.currentText() if hasattr(self, "_province_combo") else ""
@@ -518,17 +525,30 @@ class ParamsPageMixin:
         if not province or province == "请选择省份" or not region:
             self._set_status("请先选择省份和地区", False)
             return
-        self._apply_region(province, region)  # → wages.fetch：先 API 后本地
+        self._apply_region_local(province, region)
+
+    def _on_click_fetch_wage_api(self):
+        """「🌐 联网查询」：只走 API，失败就报原因（不回退内置表）。"""
+        if getattr(self, "_is_locked", False):
+            return
+        province = self._province_combo.currentText() if hasattr(self, "_province_combo") else ""
+        region = self._region_combo.currentText() if hasattr(self, "_region_combo") else ""
+        if not province or province == "请选择省份" or not region:
+            self._set_status("请先选择省份和地区", False)
+            return
+        self._fetch_wage_api(province, region)
 
     def _apply_region_local(self, province: str, region: str):
-        """只从本地静态表取值填入（切省/区、初始化时使用），不调 API。"""
+        """只从内置静态表取值填入（切省/区、初始化、「📋 用本地表」时使用），不调 API。"""
         if self._book is None:
             return
-        local = wages.get(province, region)
+        local = wages.fetch_local(province, region)
         if local is None:
-            self._set_status(f"{province} · {region} 暂无本地数据，请手动输入或点击获取按钮", False)
+            self._set_status(f"{province} · {region} 不在内置表里，请用「🌐 联网查询」或手动输入",
+                             False)
             return
-        monthly, hourly = local
+        monthly = float(local["min_wage"])
+        hourly = float(local["parttime_min"])
         for attr, v in [("min_wage", monthly), ("parttime_min", hourly)]:
             spin = self._param_spins.get(attr)
             if spin is None:
@@ -554,9 +574,10 @@ class ParamsPageMixin:
         form = QFormLayout(dlg)
 
         # OpenAI 兼容服务商模板（不含本地服务；「手动输入」可接任意 https 兼容端点）
+        # 注意：**没有「默认」服务商**，默认停在「手动输入」，用哪个由用户选
         providers = [
-            # (显示名, api_base, 默认 model)
-            ("Agnes（默认）", "https://apihub.agnes-ai.com/v1", "agnes-2.5-flash"),
+            # (显示名, api_base, 该服务商常用 model)
+            ("Agnes", "https://apihub.agnes-ai.com/v1", "agnes-2.5-flash"),
             ("DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"),
             ("通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-max"),
             ("Kimi (Moonshot)", "https://api.moonshot.cn/v1", "moonshot-v1-8k"),
@@ -568,7 +589,8 @@ class ParamsPageMixin:
             ("零一万物", "https://api.lingyiwanwu.com/v1", "yi-lightning"),
         ]
         current_url = (settings.get("api_url") or "").rstrip("/")
-        current_model = settings.get("api_model") or wages.DEFAULT_API_MODEL
+        # 模型名没有默认值：没填就是空，联网查询会提示去填
+        current_model = settings.get("api_model") or ""
 
         prov_combo = QComboBox()
         prov_combo.addItem("手动输入", "")
@@ -647,7 +669,8 @@ class ParamsPageMixin:
         test_btn.clicked.connect(_run_test)
         form.addRow("", test_btn)
 
-        hint = QLabel("保存后可在「🔄 获取最低工资」与节假日「API 一键铺」中使用该服务；失败会自动回退本地数据。")
+        hint = QLabel("保存后「🌐 联网查询」「🌐 API 一键铺」会用它；"
+                      "内置表与联网数据各自独立，点哪个按钮就用哪个，不自动互相替换。")
         hint.setObjectName("secHint")
         hint.setWordWrap(True)
         form.addRow("", hint)
@@ -688,10 +711,15 @@ class ParamsPageMixin:
         settings = self.store.load_settings()
         api_url = settings.get("api_url", "")
         if api_url:
-            model = settings.get("api_model") or wages.DEFAULT_API_MODEL
-            self._api_hint_label.setText(f"✅ API 已连接：{api_url} · 模型 {model}")
+            model = settings.get("api_model") or "（未填，联网查询会失败）"
+            key_tag = "已填 Key" if settings.get("api_key") else "无 Key（供不校验 Key 的网关）"
+            self._api_hint_label.setText(
+                f"✅ 已配置 API：{api_url} · 模型 {model} · {key_tag}\n"
+                "「🌐 联网查询」「🌐 API 一键铺」会用它；点「📋 用本地表」则完全不联网")
         else:
-            self._api_hint_label.setText("ℹ️ 未配置最低工资 API：选择地区后会自动填入内置的本地官方最低工资表，无需手动输入（可选配 API 联网获取最新标准）")
+            self._api_hint_label.setText(
+                "ℹ️ 未配置 API：最低工资/节假日都用内置官方表；"
+                "未公布年份（如次年）可配 API 后用「🌐 联网查询」获取")
 
     def _on_province_changed(self, text: str):
         """省份下拉切换 → 重建地区列表 → 保存 settings → 自动用本地表填最低工资。"""
@@ -737,11 +765,10 @@ class ParamsPageMixin:
         self.store.save_settings(settings)
         self._apply_region_local(province, text)
 
-    def _apply_region(self, province: str, region: str):
-        """选地区时触发：优先 API 获取，失败则 fallback 本地静态表。
-        同时同步 overtime_base（若锁定）。
+    def _fetch_wage_api(self, province: str, region: str):
+        """联网查询最低工资（异步）：只认 API 结果，失败则报原因，不拿内置表顶上。
 
-        网络请求放在后台线程执行：API 调用最长会等 15 秒，若在主线程同步调用
+        网络请求放后台线程：API 调用可能等十几秒，若在主线程同步调用
         整个界面会在此期间完全冻结（用户感受是“卡死”）。
         """
         if self._book is None:
@@ -752,21 +779,20 @@ class ParamsPageMixin:
         api_model = settings.get("api_model") or None
         year, month = self._book.year, self._book.month
         self._set_busy_wage_btn(True)
-        self._set_status(f"正在获取 {province} · {region} 的最低工资…", True)
-        # fetch 内部先试 API，失败自动 fallback 本地静态表
+        self._set_status(f"正在联网查询 {province} · {region} 的最低工资…", True)
         self._wage_call = worker.run_async(
-            lambda: wages.fetch(api_url, api_key, year, month, province, region,
-                                api_model=api_model),
+            lambda: wages.fetch_wage_api(api_url, api_key, year, month, province, region,
+                                         api_model=api_model),
             on_done=lambda data: self._on_wage_fetched(
                 province, region, year, month, data),
-            on_failed=lambda msg: self._set_status(f"获取最低工资失败：{msg}", False),
+            on_failed=lambda msg: self._set_status(f"联网查询最低工资失败：{msg}", False),
             on_finished=lambda: self._set_busy_wage_btn(False),
         )
 
     def _set_busy_wage_btn(self, busy: bool):
-        """获取按钮的忙碌态（禁用 + 文案）；旧控件已销毁时会自动忽略。"""
-        set_busy_button(getattr(self, "_fetch_wage_btn", None), busy,
-                        "⏳ 获取中…", "🔄 获取最低工资",
+        """联网查询按钮的忙碌态（禁用 + 文案）；旧控件已销毁时会自动忽略。"""
+        set_busy_button(getattr(self, "_fetch_wage_api_btn", None), busy,
+                        "⏳ 查询中…", "🌐 联网查询（API）",
                         enabled=not getattr(self, "_is_locked", False))
 
     def _on_wage_fetched(self, province: str, region: str,
@@ -780,11 +806,16 @@ class ParamsPageMixin:
                 f"{year}-{month:02d} 的最低工资已取回，但当前月份已切换，结果未套用", False)
             return
         if data is None:
-            self._set_status(f"已选择 {province} · {region}，但未获最低工资数据，需手动输入", False)
+            self._set_status(f"联网查询 {province} · {region} 未返回数据", False)
             return
-        source = data.get("source", "?")
         monthly = float(data.get("min_wage") or 0)
         hourly = float(data.get("parttime_min") or 0)
+        if monthly <= 0 or hourly <= 0:
+            # 联网失败 / 数值被合理性校验挡下 → 不写 0 进账本，也不拿内置表顶上
+            reason = data.get("api_error")
+            self._set_status(f"联网查询失败：{reason or '未返回有效数值'}"
+                             f"（{province} · {region} 的数值未改动）", False)
+            return
         for attr, v in [("min_wage", monthly), ("parttime_min", hourly)]:
             spin = self._param_spins.get(attr)
             if spin is None:
@@ -798,14 +829,18 @@ class ParamsPageMixin:
         if getattr(self, "_fund_base_locked", False):
             self._sync_fund_base_with_min_wage(monthly)
         self._changed()
-        api_error = data.get("api_error")
-        tag = "API" if source == "api" else "本地"
-        msg = f"已按 {province} · {region}（{year}-{month:02d}）拉取最低工资 · {tag}"
-        if api_error:
-            # 配了 API 但没打通：明确告知原因，避免用户误以为用的是联网数据
-            self._set_status(f"{msg}（API 未成功：{api_error}）", False)
-        else:
+        msg = f"已联网取数（{province} · {region} · {year}-{month:02d}）"
+        # ⚠ 实测（2026-10-07）：模型可能给成别省/过期的数字（例：安徽·合肥 应 2320，
+        # 模型给 2490）—— 两个数额都要显示；与内置官方表不一致时必须提醒核对。
+        nums = f"月 {monthly:g} / 时 {hourly:g} 元"
+        local = wages.get(province, region)
+        if local is not None and (abs(local[0] - monthly) >= 1.0
+                                  or abs(local[1] - hourly) >= 0.5):
+            msg += (f" · API {nums} · ⚠ 与内置官方表（{local[0]:g}/{local[1]:g}）"
+                    "不一致，请核对")
             self._set_status(msg, True)
+        else:
+            self._set_status(msg + f"（{nums}）", True)
 
     def _sync_ot_base_with_min_wage(self, min_wage_val: float):
         """overtime_base 锁定时跟随 min_wage 值更新（调用方通常已 blockSignals）。"""

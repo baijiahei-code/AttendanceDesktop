@@ -7,7 +7,7 @@ urllib 请求（超时 15 秒）。如果直接在 Qt 主线程调用，整个�
 用法（回调都在主线程执行，可以安全地更新界面）::
 
     self._api_call = run_async(
-        lambda: wages.fetch(...),          # 在工作线程执行
+        lambda: wages.fetch_wage_api(...),   # 在工作线程执行
         on_done=self._on_wage_result,      # 成功 → 主线程
         on_failed=lambda msg: ...,         # 异常 → 主线程
         on_finished=lambda: btn.setEnabled(True),  # 无论如何都执行
@@ -53,23 +53,29 @@ class _Job(QRunnable):
 # 兜底保活：任务结束前不让 AsyncCall 被垃圾回收
 _ACTIVE: set["AsyncCall"] = set()
 
+# 用于 AsyncCall._call 区分「无参调用」与「传 None」
+_NOARG = object()
 
-class AsyncCall:
-    """一次后台调用的句柄：持有信号对象，直到任务结束。"""
+
+class AsyncCall(QObject):
+    """一次后台调用的句柄：持有信号对象，直到任务结束。
+
+    自身是 ``QObject``（在主线程创建）→ 信号用队列连接投递，**回调必然在主线程执行**，
+    可以安全更新界面。``cancel()`` 会放弃**全部**回调（含 on_done / on_failed），
+    因此窗口关闭 / 页面销毁后回来的结果不会再触碰界面。
+    """
 
     def __init__(self, fn: Callable[[], object],
                  on_done: Callable[[object], None] | None = None,
                  on_failed: Callable[[str], None] | None = None,
                  on_finished: Callable[[], None] | None = None):
+        super().__init__()
+        self._on_done = on_done
+        self._on_failed = on_failed
         self._on_finished = on_finished
-        self._signals = _JobSignals()
-        if on_done is not None:
-            self._signals.done.connect(on_done)
-        if on_failed is not None:
-            self._signals.failed.connect(on_failed)
-        # 连接顺序在用户回调之后：保证收尾逻辑最后执行
-        self._signals.done.connect(self._finish)
-        self._signals.failed.connect(self._finish)
+        self._signals = _JobSignals(self)   # 父子关系：随本对象一起销毁
+        self._signals.done.connect(self._dispatch_done)
+        self._signals.failed.connect(self._dispatch_failed)
         self._job = _Job(fn, self._signals)
         self._cancelled = False
 
@@ -79,18 +85,32 @@ class AsyncCall:
         return self
 
     def cancel(self):
-        """放弃结果处理（请求本身无法中断，仅忽略回调）。"""
+        """放弃这次调用的**全部**回调（请求本身无法中断，仅忽略结果）。"""
         self._cancelled = True
 
-    def _finish(self, *_args):
-        _ACTIVE.discard(self)
-        if self._on_finished is None or self._cancelled:
+    # —— 内部：统一在这里判 cancelled + 挡住控件已销毁导致的 RuntimeError ——
+    @staticmethod
+    def _call(fn, arg=_NOARG):
+        if fn is None:
             return
         try:
-            self._on_finished()
+            fn() if arg is _NOARG else fn(arg)
         except RuntimeError:
-            # 目标控件已销毁（例如设置对话框被关闭）——忽略
-            pass
+            pass  # 目标控件已销毁（对话框被关闭 / 窗口正在退出）
+
+    def _dispatch_done(self, result):
+        if not self._cancelled:
+            self._call(self._on_done, result)
+            self._finish()
+
+    def _dispatch_failed(self, msg):
+        if not self._cancelled:
+            self._call(self._on_failed, msg)
+            self._finish()
+
+    def _finish(self):
+        _ACTIVE.discard(self)
+        self._call(self._on_finished)
 
 
 def run_async(fn: Callable[[], object],

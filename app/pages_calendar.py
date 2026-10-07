@@ -40,16 +40,17 @@ class CalendarPageMixin:
         fill_btn = QPushButton("✨ 一键铺（周末休/工作日上）")
         fill_btn.setToolTip(
             "按普通日历铺设：周末标为休息，其余工作日标为上班。"
-            "法定节假日/调休请使用旁边的「API 一键铺」。"
+            "法定节假日/调休请用旁边的「📋 铺本地表」（不联网）或「🌐 API 一键铺」（联网）。"
             "已填过的日期不会被覆盖。")
         fill_btn.setStyleSheet(
             "QPushButton{background:#EEF2FF;color:#4F46E5;border:1px solid #C7D2FE;"
             "border-radius:9px;padding:5px 10px;font-weight:600;}"
             "QPushButton:hover{background:#E0E7FF;}")
         fill_btn.clicked.connect(self._fill_default_calendar)
-        api_fill_btn = QPushButton("🌐 API 一键铺（法定节假日/调休）")
+        api_fill_btn = QPushButton("🌐 API 一键铺（联网）")
         api_fill_btn.setToolTip(
-            "优先调用 API 获取某年节假日/调休安排（失败用内置表），"
+            "只调用你在「⚙️ API 设置」里配的 API 获取某年节假日/调休安排"
+            "（失败会直接提示原因，不会改用内置表）；\n"
             "只铺设周末、法定节假日、调休三类日期，其余日期保持不变。")
         api_fill_btn.setStyleSheet(
             "QPushButton{background:#ECFDF5;color:#065F46;border:1px solid #A7F3D0;"
@@ -57,15 +58,27 @@ class CalendarPageMixin:
             "QPushButton:hover{background:#D1FAE5;}")
         api_fill_btn.clicked.connect(self._api_fill_holidays)
         self._api_fill_btn = api_fill_btn  # 后台请求期间显示忙碌态
+        local_holiday_btn = QPushButton("📋 铺本地表（法定节假日/调休）")
+        local_holiday_btn.setToolTip(
+            "用软件内置的国务院节假日/调休安排铺设（不联网）；\n"
+            "只铺设周末、法定节假日、调休三类日期，其余日期保持不变。")
+        local_holiday_btn.setStyleSheet(
+            "QPushButton{background:#F5F3FF;color:#5B21B6;border:1px solid #DDD6FE;"
+            "border-radius:9px;padding:5px 10px;font-weight:600;}"
+            "QPushButton:hover{background:#EDE9FE;}")
+        local_holiday_btn.clicked.connect(self._fill_holidays_local)
+        self._local_holiday_btn = local_holiday_btn
         clear_btn = QPushButton("清空考勤")
         clear_btn.setObjectName("danger")
         clear_btn.clicked.connect(self._clear_days)
         bar.addStretch(1)
         bar.addWidget(api_fill_btn)
+        bar.addWidget(local_holiday_btn)
         bar.addWidget(fill_btn)
         bar.addWidget(clear_btn)
         lay.addLayout(bar)
-        self._calendar_modify_widgets.extend([fill_btn, api_fill_btn, clear_btn])
+        self._calendar_modify_widgets.extend(
+            [fill_btn, api_fill_btn, local_holiday_btn, clear_btn])
 
         chip_meta = [("work", "上班"), ("rest", "休息"), ("personal", "事假"),
                      ("sick", "病假"), ("family", "婚/丧/产/年假"),
@@ -381,7 +394,7 @@ class CalendarPageMixin:
         """普通一键铺：只区分周末/工作日，不处理法定节假日与调休。
         - 空白周末 → 休息
         - 空白工作日（周一到周五）→ 上班
-        已填过的日期不覆盖。法定节假日和调休的精确铺法请用 API 一键铺。
+        已填过的日期不覆盖。法定节假日和调休的精确铺法请用「📋 铺本地表」或「🌐 API 一键铺」。
         """
         if self._loading or not self._book:
             return
@@ -407,8 +420,24 @@ class CalendarPageMixin:
         else:
             self._set_status("本月没有可铺设的空白日期", True)
 
+    def _fill_holidays_local(self):
+        """「📋 铺本地表」：用内置 holidays.py 铺设（不联网），未收录年份则直接提示。"""
+        if self._loading or not self._book:
+            return
+        if getattr(self, "_is_locked", False):
+            self._set_status("月份已锁定，无法铺设", False)
+            return
+        y, m = self._book.year, self._book.month
+        data = wages.fetch_holidays_local(y)
+        if data is None:
+            self._set_status(
+                f"内置表没有 {y} 年安排（国务院通常在上年 11 月发布）；"
+                f"可配置 API 后用「🌐 API 一键铺」试试", False)
+            return
+        self._apply_holidays(y, m, data)
+
     def _api_fill_holidays(self):
-        """API 一键铺：调用 API（失败 fallback 本地），只铺三类日期，其余保持不变。
+        """「🌐 API 一键铺」：只走 API，失败直接报原因（不回退内置表），只铺三类日期。
         处理对象：
           - makeup 调休补班日 → 强制 status=上班
           - statutory 法定节假日 → 强制 status=休息 + mark=1（×3加班）
@@ -416,7 +445,7 @@ class CalendarPageMixin:
           - 周末 → 强制 status=休息
         已填日期 **会被覆盖**（节假日/调休类日期需要精确值）。
 
-        网络请求放后台线程：API 最长等 15 秒，同步调用会让界面冻结。
+        网络请求放后台线程：API 可能等十几秒，同步调用会让界面冻结。
         """
         if self._loading or not self._book:
             return
@@ -430,12 +459,15 @@ class CalendarPageMixin:
         api_url = settings.get("api_url", "")
         api_key = settings.get("api_key", "")
         api_model = settings.get("api_model") or None
+        if not api_url:
+            self._set_status("未配置 API 地址，无法联网铺节假日；"
+                             "可改用「📋 铺本地表」", False)
+            return
         self._api_fill_busy = True
         self._set_api_fill_busy(True)
-        src = "API" if (api_url and api_key) else "本地表"
-        self._set_status(f"正在获取 {y} 年节假日安排（{src}）…", True)
+        self._set_status(f"正在联网获取 {y} 年节假日安排…", True)
         self._holiday_call = worker.run_async(
-            lambda: wages.fetch_holidays(api_url, api_key, y, api_model=api_model),
+            lambda: wages.fetch_holidays_api(api_url, api_key, y, api_model=api_model),
             on_done=lambda data: self._apply_holidays(y, m, data),
             on_failed=lambda msg: self._set_status(f"获取节假日失败：{msg}", False),
             on_finished=self._on_holiday_fetch_done,
@@ -444,7 +476,7 @@ class CalendarPageMixin:
     def _set_api_fill_busy(self, busy: bool):
         """「API 一键铺」按钮忙碌态；按钮可能已随页面重建而销毁，会自动忽略。"""
         set_busy_button(getattr(self, "_api_fill_btn", None), busy,
-                        "⏳ 获取中…", "🌐 API 一键铺（法定节假日/调休）",
+                        "⏳ 获取中…", "🌐 API 一键铺（联网）",
                         enabled=not getattr(self, "_is_locked", False))
 
     def _on_holiday_fetch_done(self):
@@ -460,12 +492,17 @@ class CalendarPageMixin:
                 f"{y} 年节假日已取回，但当前月份已切换，结果未铺设", False)
             return
         if data is None:
-            self._set_status(f"{y} 年节假日数据未找到（API 和本地表都没有），无法铺设", False)
+            self._set_status(f"{y} 年节假日数据未找到，无法铺设", False)
             return
         statutory = set(data.get("statutory", []))
         rest = set(data.get("rest", []))
         makeup = set(data.get("makeup", []))
         source = data.get("source", "?")
+        if not (statutory or rest or makeup):
+            # 联网查询失败：直接报原因，不拿另一份数据顶上（用户 2026-10-07 口径）
+            reason = data.get("api_error") or "未返回任何日期"
+            self._set_status(f"获取节假日失败：{reason}（本月未改动）", False)
+            return
         changed_count = 0
         for d in self._book.days:
             key = f"{m:02d}-{d.day:02d}"
@@ -493,14 +530,27 @@ class CalendarPageMixin:
                 changed_count += 1
         self._render_calendar()
         self._changed()
-        api_error = data.get("api_error")
-        tag = "API" if source == "api" else "本地"
-        msg = f"节假日铺设完成 · {tag} 来源 · {y} 年 · 影响 {changed_count} 天"
-        if api_error:
-            # 配了 API 但没打通：明确告知原因，避免用户误以为用的是联网数据
-            self._set_status(f"{msg}（API 未成功：{api_error}）", False)
-        else:
-            self._set_status(msg, True)
+        tag = "API（AI 生成，请核对）" if source == "api" else "本地官方表"
+        msg = (f"节假日铺设完成 · {tag} · {y} 年 · 影响 {changed_count} 天"
+               f"（法定 {len(statutory)} / 放假 {len(rest)} / 补班 {len(makeup)} 日）")
+        if source == "api":
+            # ⚠ 实测（2026-10-07）：同一个模型同一年，三次调用给了三个不同答案
+            # （11/31/7 → 12/32/12），还会把 2025 年春节当成 2026 的（1/28~31 vs 2/16~19）。
+            # 按用户口径仍然采用 API 结果，但必须把与内置官方表的差异摆出来让其核对。
+            try:
+                from . import holidays as _holidays
+                _sets = _holidays._year_sets(y)  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - 校验失败不该影响铺设
+                _sets = None
+            if _sets:
+                _diff = [k for k, name in (("statutory", "法定"), ("rest", "放假"),
+                                           ("makeup", "补班"))
+                         if set(data.get(k, [])) != set(_sets[k])]
+                if _diff:
+                    msg += (" · ⚠ 与内置官方表不一致（官方 法定"
+                            f"{len(_sets['statutory'])}/放假{len(_sets['rest'])}/"
+                            f"补班{len(_sets['makeup'])}）——差异：{'、'.join(_diff)}，请核对")
+        self._set_status(msg, True)
 
     def _show_day_menu(self, day):
         """日历格子右键：快捷设置状态 / 法定节假日标记。"""
