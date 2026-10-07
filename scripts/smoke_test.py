@@ -237,6 +237,9 @@ win2._go(2026, 10)  # 重新载入
 names = [it.name for it in win2._book.pay_items]
 assert victim_name not in names, f"deleted item {victim_name} reappeared: {names}"
 assert len(win2._book.pay_items) == 2
+# 关窗后仍有约 150ms 的合并保存定时器在途；目录马上要删，先停掉它，
+# 否则后面任何 processEvents() 都会让它去写已删除的目录并打印 traceback。
+win2._change_timer.stop()
 win2.close()
 shutil.rmtree(_tmp, ignore_errors=True)
 print("delete-sync OK")
@@ -342,6 +345,7 @@ items_text = [win3.history.item(i).text() for i in range(win3.history.count())]
 assert any("🔒" in t and "2026 年 12 月" in t for t in items_text), f"12 月列表项应带 🔒: {items_text}"
 print("history lock-marker OK")
 
+win3._change_timer.stop()
 win3.close()
 shutil.rmtree(_tmp2, ignore_errors=True)
 print("lock OK")
@@ -493,6 +497,7 @@ assert win4._fill_agreed_btn.isEnabled() is True
 win4._on_numeric("min_wage")
 print("unlocked state restored OK")
 
+win4._change_timer.stop()
 win4.close()
 shutil.rmtree(_tmp3, ignore_errors=True)
 
@@ -891,3 +896,62 @@ while _time.monotonic() < _deadline and len(_seen) < 2:
     _time.sleep(0.01)
 assert _seen == ["done", "finished"], f"回调顺序应为 done→finished：{_seen}"
 print("worker cancel OK")
+
+# ---- 单实例保护：第二次启动不得新建窗口，而应唤醒已在运行的窗口 ----
+# 回归背景：数据是「一月一个 JSON」+ 内存副本 + 防抖保存，
+# 两个窗口同时编辑同一个月会互相覆盖（后写的一方赢）→ 必须保证单实例。
+from app import single_instance as _si  # noqa: E402
+
+# 用测试专用服务名：绝不能碰真实运行中的实例（否则会把它调到前台/抢它的名字）
+_si.server_name = lambda: "AttendanceDesktop-smoke-test"
+
+_app3 = _QApp.instance() or _QApp([])
+
+# ① 开关：默认启用单实例保护，ATT_ALLOW_MULTI 可关闭
+os.environ.pop("ATT_ALLOW_MULTI", None)
+assert _si.allow_multi_instance() is False
+for _v in ("1", "true", "YES", "On"):
+    os.environ["ATT_ALLOW_MULTI"] = _v
+    assert _si.allow_multi_instance() is True, _v
+os.environ["ATT_ALLOW_MULTI"] = "0"
+assert _si.allow_multi_instance() is False
+os.environ.pop("ATT_ALLOW_MULTI", None)
+
+# ② 没有实例在跑时：不得误判为"已存在"，且能成功监听
+assert _si.notify_existing() is False, "没有任何实例时不应报告'已在运行'"
+_hits: list = []
+_srv = _si.InstanceServer(lambda: _hits.append("activate"))
+assert _srv.start() is True, "首个实例应能成功监听"
+
+# ③ 第二个实例：notify_existing() 报 True，并触发首个实例的"置前"回调
+assert _si.notify_existing() is True, "已有实例在跑时必须报告 True（本次启动应退出）"
+_deadline = _time.monotonic() + 3
+while _time.monotonic() < _deadline and not _hits:
+    _app3.processEvents()
+    _time.sleep(0.01)
+assert _hits == ["activate"], f"首个实例应收到一次唤醒请求：{_hits}"
+
+# ④ 再点一次（反复双击图标）：每次都要唤醒，不能只生效一次
+assert _si.notify_existing() is True
+_deadline = _time.monotonic() + 3
+while _time.monotonic() < _deadline and len(_hits) < 2:
+    _app3.processEvents()
+    _time.sleep(0.01)
+assert _hits == ["activate", "activate"], _hits
+
+# ⑤ 已经有一个实例在监听时，后续启动仍必须被识别为"已有实例"。
+#   ⚠ 平台差异：Windows 上 Qt 允许同名命名管道再 listen 成功（不报 AddressInUse），
+#   而 Linux/macOS 会失败。所以这里不断言"第二个必须抢占失败"，
+#   只断言真正要紧的性质：无论 listen 成没成功，都不能影响"已被识别为运行中"。
+_srv2 = _si.InstanceServer(lambda: None)
+_srv2.start()  # 结果平台相关，不参与断言
+assert _si.notify_existing() is True, "已有实例在跑时必须报告 True（本次启动应退出）"
+
+# ⑥ 实例退出后应能重新启动（清理干净，不留"必须重启电脑"的假死）
+_srv2.close()
+_srv.close()
+assert _si.notify_existing() is False, "实例退出后应能再次启动"
+_srv3 = _si.InstanceServer(lambda: None)
+assert _srv3.start() is True, "实例退出后应能重新监听"
+_srv3.close()
+print("single instance OK")

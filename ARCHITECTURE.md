@@ -21,6 +21,7 @@ app/
 ├── holidays.py              # 法定节假日 / 调休表（按年查，本地表与 API 两个独立入口）
 ├── wages.py                 # 全国最低工资标准（省/地二级；本地表与 API 两个独立入口）
 ├── worker.py                # 后台任务（QThreadPool）：网络请求不阻塞界面
+├── single_instance.py       # 单实例保护（QLocalServer/Socket）：第二次启动只唤醒已有窗口
 ├── excel_style.py           # Excel 导出的统一样式（HEADER_FILL/BODY_FONT/...）
 ├── style.py                 # Qt 样式表（QSS）
 ├── config.py                # 应用级常量（按钮文案、tooltip、参数名）
@@ -154,7 +155,6 @@ def _flush_changed():
 用户主动点「保存」时走 `_manual_save`，它会无视驻留期给出回执。
 
 ### 6. Excel 样式单一来源
-
 `pages_annual.py` 和 `pages_report.py` 都从 `app/excel_style.py` 取样式常量：
 
 ```python
@@ -165,6 +165,35 @@ from .excel_style import HEADER_FILL, BODY_FONT, MONEY_FMT, ...
 
 > 历史：原来 `pages_report.py` 与 `pages_annual.py` 各自维护一套 `_EXCEL_*` / `_XL_*`
 > 样式常量，重构后合并到 `excel_style.py` 单一来源。
+
+### 7. 单实例保护（`single_instance.py`）
+
+**为什么必须有**：数据是「一个月一个 JSON」+ 全量内存副本 + 150ms 合并保存。
+两个窗口同时打开同一个月时，各自持有独立副本，**后保存的一方会把先保存的覆盖掉**
+（用户看到的是"改了没生效/数字跳回去"）。所以同一用户只允许一个窗口。
+
+机制（Qt 自带本地 IPC，无第三方依赖、不写锁文件）：
+
+| 角色 | 动作 |
+|---|---|
+| 第一个实例 | `InstanceServer.start()` → `QLocalServer.listen(<名字>)`，并**持有引用** |
+| 后续实例 | `notify_existing()` 先用 `QLocalSocket` 连一次；连上 → 发 1 个字节 → **自己立刻退出**（退出码 0） |
+| 第一个实例收到连接 | 回调 `main.py::_bring_to_front(win)`：清 `WindowMinimized` → `show/raise_/activateWindow` |
+
+要点：
+
+- 服务名 `AttendanceDesktop-instance-v1-<用户名>`：带版本号（将来改通信格式可直接换名，
+  新旧版本互不干扰）+ 带用户名（同机不同用户互不抢占）。名字由 `server_name()` 单点定义。
+- **`InstanceServer` 被回收 = 监听消失**，所以 `main.py` 里它以 `win` 为 parent 持有；
+  测试里也必须存变量。
+- 「名字被占」分两种情况，`start()` 会自己分辨：真有人在跑 → 返回 `False` 让位；
+  上一实例被强杀（Linux/macOS 残留 socket 文件）→ `removeServer()` 清掉重试。
+- 建不起 IPC 通道**不算致命错**：打印一行提示后照常启动（退化为可多开），
+  不让"保护机制"反而把程序卡在打不开。
+- 逃生开关：环境变量 `ATT_ALLOW_MULTI=1` 直接关掉保护（对照/调试用）。
+- ⚠ 平台差异：Windows 上 Qt 允许同名命名管道再 `listen` 成功（不报 `AddressInUse`），
+  所以**不能**依赖"第二个实例 listen 一定失败"来保证唯一 —— 真正生效的是
+  「先探后启」这个顺序（`main.py` 里 `notify_existing()` 在 `InstanceServer` 之前）。
 
 ---
 

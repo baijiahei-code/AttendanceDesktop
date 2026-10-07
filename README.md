@@ -68,6 +68,15 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python scripts/smoke_test.py
 `%LOCALAPPDATA%\工作考勤表\data\`，其它平台为 `$XDG_DATA_HOME/工作考勤表/data`；
 可用环境变量 `ATT_DATA_DIR` 覆盖数据目录。导出的 Excel 默认落在系统「文档」目录。
 
+### 只能开一个窗口
+
+同一时间只允许运行一个实例：重复双击图标（或再次运行 `main.py`）**不会**再开一个窗口，
+而是把已经在运行的窗口调到前台后立即退出。
+
+原因是数据以「一月一个 JSON 文件」为单位整体读入内存、改动后自动保存 ——
+两个窗口同时编辑同一个月时，后保存的一方会把先保存的改动覆盖掉。
+调试时可用环境变量 `ATT_ALLOW_MULTI=1` 关闭这层保护（允许同时开多个窗口）。
+
 ### 敏感字段加密与密钥拷贝风险
 
 - **Windows**：API 凭据由 **DPAPI** 加密（密钥由 Windows 账户托管、不落盘），
