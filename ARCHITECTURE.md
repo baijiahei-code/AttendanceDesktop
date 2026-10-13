@@ -13,12 +13,13 @@
 main.py                    # 应用入口（仓库根：创建 QApplication / MonthStore / MainWindow）
 app/
 ├── __init__.py              # 仅一行包说明（实际导入都在各模块显式写）
-├── model.py                 # 数据类：MonthBook, PayItem, DayEntry, ...
+├── model.py                 # 数据类：MonthBook, PayItem, RelatedUnit, DayEntry, ...
 ├── calc.py                  # 工资核算引擎（compute(book) -> Result）
 ├── storage.py               # 月份存档 + Settings（读取缓存 + 文件权限收紧）
 ├── crypto.py                # 敏感字段加解密：DPAPI / 国密双后端 + 令牌格式
 ├── gm.py                    # 国密算法封装（SM2/SM3/SM4/KDF/HMAC-SM3）+ 自证清单
 ├── holidays.py              # 法定节假日 / 调休表（按年查，本地表与 API 两个独立入口）
+├── i18n.py                  # Qt 内置文案汉化（右键菜单 / 对话框标准按钮；启动时装一次）
 ├── wages.py                 # 全国最低工资标准（省/地二级；本地表与 API 两个独立入口）
 ├── worker.py                # 后台任务（QThreadPool）：网络请求不阻塞界面
 ├── single_instance.py       # 单实例保护（QLocalServer/Socket）：第二次启动只唤醒已有窗口
@@ -44,16 +45,20 @@ app/
 
 ### 1. Mixin-based 主窗口
 
-`MainWindow` 由 6 个 mixin 组合：
+`MainWindow` 由 7 个 mixin 组合：
 
 ```python
-class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
+class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPageMixin,
                  ParamsPageMixin, ReportPageMixin, AnnualPageMixin, QMainWindow):
 ```
 
 每个 mixin 对应**一个工作区**，独占：
 
-- 自己的 root widget（`overview_page` / `calendar_page` / `salary_root` / `params_root` / `report_page` / `annual_page`）
+- 自己的 root widget（`overview_page` / `units_root` / `calendar_page` / `salary_root` / `params_root` / `report_page` / `annual_page`）
+  ⚠️ 页面顺序即导航顺序，索引一律从 `ui.PAGE_INDEX[key]` 取（**不要写死数字**，插页会错位）
+  ⚠️ 侧栏的**显示分组**由 `ui.NAV_GROUPS` 单独定义（不改页面索引）：第一组无标题，
+  只放「相关单位」（单位档案性质的独立入口，不随月份走）；「功 能」组放其余 6 个页面。
+  `_build_sidebar` 按分组渲染，但 `nav_btns` 仍按**页面索引顺序**填（`_show_page` 用 enumerate 反查选中项）。
 - `_fill_xxx()` 构造 UI 一次性方法（在 `_go()` 时调用）
 - `_render_xxx(r)` 数据更新（懒渲染：只在当前页 + 数据版本号变化时执行）
 - 业务回调（`_on_pick_status` / `_on_salary_attr` 等）
@@ -121,6 +126,55 @@ card.set_locked(True)         # 一键禁用卡片内所有交互控件
 锁定后保留：切换月份 / 查看历史 / **导出 Excel**。
 
 > 导出按钮用 `card.add_widget_untracked(pbtn)` 加入卡片，使其不被 `set_locked()` 禁用，满足"锁定仍可导出"。
+
+**唯一的一类例外：只读动作**（不会被锁定禁用，各页在 `_set_xxx_locked` 里再 `setEnabled(True)`）：
+
+- 报表页「导出 Excel」（`card.add_widget_untracked(pbtn)`）
+- 相关单位页的「🔍 去搜索」（只查外部网站）与**页内自己的锁按钮**
+  （不放开就再也解不开了）
+
+**「相关单位」页不在 `_is_locked` 的管辖范围内** —— 它的数据是**全局**的
+（与月份无关，存在 `settings.json` 的 `units`，见下）。可改性只由它自己那把锁
+（`pages_units._units_lock_btn`，会话级）控制：
+
+- `_apply_lock_state` 的钩子里**没有** `_set_units_locked`（只 参数 / 考勤 / 薪酬 三页）；
+- 所以整月锁定时本页照常可编辑，改动只写 `settings.json`、**不碰月度存档**
+  （`_save_units` → `store.save_units`），底部状态栏会提示「单位表已保存」。
+- 该页**根本没有月份操作条**（上月 / 月份 / 锁定 / 下月 / 删除本月）：页面归属由
+  `ui.NO_MONTH_BAR_KEYS` 声明（与 `PAGES` / `NAV_GROUPS` 放一起），
+  `MainWindow._sync_month_bar()` 在切页与切月时执行 —— 命中该表的页面
+  **`layout.removeWidget(bar)` + `hide()`（真摘掉，不是 `setVisible(False)`）**，
+  离开时再 `insertWidget(页面栈之前)` + `show()`；
+  只读动作与锁按钮由 `pages_units._refresh_units_lock_ui()` 在锁定后重新 `setEnabled(True)`。
+
+### 4.1 全局相关单位（与月份无关）
+
+单位档案（劳动合同签订 / 社保缴纳 / 工资发放 …涉及的公司）**不按月存**：
+
+```
+settings.json  { "units": [ {"role": "contract", "name": "…", "code": "…"}, … ], … }
+```
+
+- 读写：`MonthStore.load_units()` / `save_units()`（读回来的对象可直接改，改完存回；
+  写单位不会顶掉其它设置 —— 内部是「读设置 → 改 `units` 键 → 存回」）；
+- **不读也不写月度存档**：`MonthBook` 里**已没有 `units` 字段**，老存档里残留的 `units` 键
+  会被直接忽略（**没有自动迁移**，用户 2026-10-13 明确要求删掉）；
+- 种子：全新安装（设置里**没有** `units` 键）时页面按 `model.default_units()`
+  **内置类型各列一行**（名称 / 编号留空，**不含**「其他相关单位」）；`_units_list()`
+  只把这份种子放在内存里，**首次修改才落盘**。设置里一旦有 `units` 键（哪怕只剩空表）
+  就以存的那份为准 —— **删掉的行不会自己回来**（`_save_units` 每次改动都会写盘）；
+- 页面：`pages_units._units_list()` 是内存里的那一份，行控件绑定其中的 `RelatedUnit`；
+- **不参与参数模板**：`pages_params._collect_params()` 不再写 `units`，`_apply_template()`
+  也不再调 `_apply_units_from_template`（该方法已删）—— 旧模板里残留的 `units` 键会被忽略
+  （用户 2026-10-13：「这个和套用参数模板也无关」）；
+- 行尾动作按钮（`_UnitRow.action_btn`）**按类型变**：普通单位是「🔍 去搜索」，
+  **工资代发银行**（`model.UNIT_ROLE_BANK`）是「📋 复制」——
+  `_on_unit_row_action()` 分流到 `_open_unit_search_menu()` / `_copy_unit_values()`——
+  银行那行**一次复制两个值**（银行名称 + 联行号 / 账号，`"\n"` 连接，只填一个就只复制一个），
+  `_refresh_unit_row_action()` 在**建行时**与**改类型时**各刷一次图标 / tooltip。
+  两个动作都是**只读**的：锁定时仍可用（`_refresh_units_lock_ui` 会把按钮重新打开）；
+- 查询辅助：没有了 —— `model.units_of()` / `first_unit_name()` 已删（前者随字段降级、
+  后者随「一键同劳动合同签订单位」功能一起移除）；现在每家的名称 / 编号都只能手填。
 
 ### 5. 懒渲染 + 150ms 合并保存
 
@@ -434,6 +488,9 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 - **`r.counts.normal_labor_days`** 与左侧"提供正常劳动天数"spin 永远同步（参数页"一键填入"按钮会拉 calc 结果回填）
 - **加班费计算基数**：用户锁定时，不再随最低工资变化联动（参数页三个锁按钮独立）
 - **节假日**：日历页有「📋 铺本地表」（内置 `holidays.py`，不联网）与「🌐 API 一键铺」（只走 API，失败直接报错不回退）两个独立入口，最终状态可被 UI 改写
+- **节假日日型判定只有一处**：`holidays.classify_day()`（优先级：法定 → 补班 → 放假），
+  内置表（`day_kind`）与 API 铺设（`pages_calendar._apply_holidays`）都调它；
+  要拿原始集合用公开的 `holidays.year_sets()`
 
 ---
 
@@ -486,3 +543,37 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
    统一收紧（目录 700 / 文件 600），并在启动时补修历史文件
 7. **`QStandardPaths` 返回正斜杠路径**：与 `os.path.join` 拼出的 Windows 路径会**混用分隔符**
    （`C:/…/Documents\名.xlsx`）→ 导出默认路径处用 `os.path.normpath` 归一化
+
+### 全量代码审计（2026-10-07）
+
+8. **`calc.company_hourly_cost` 除零**：分母是「提供正常劳动天数 × 每日工时」，却只判了天数 > 0 ——
+   参数页把「24 小时内工时」填成 0 就直接 `ZeroDivisionError`，整个核算崩掉。改为对整个乘积判 > 0；
+   同时参数页所有数字框统一 `minimum=0`（工时 / 基数 / 比例填负数没有意义）
+9. **后台任务被取消后按钮永远卡住**：`worker.AsyncCall._dispatch_done/_failed` 只在「未取消」分支里
+   调 `_finish()` → `cancel()` 之后 `on_finished` 永不执行（各页面「查询中…」按钮停在禁用态），
+   `_ACTIVE` 还泄漏。改为 `try/finally` 保证 `_finish()` 必跑。**新契约**：`cancel()` 只拦
+   结果类回调（`on_done` / `on_failed`），`on_finished` 照常执行
+10. **「关于」对话框谎报国密**：`crypto.describe()` 只要后端不是 `plain` 就返回
+    「SM2(C1C3C2) + SM4-CBC + HMAC-SM3」，而 Windows 实际走 DPAPI（无密钥文件、不涉及国密）。
+    改为按后端给出真实描述；`key_ready` 在非 `gm` 后端恒为 True（不存在的密钥文件不再被当成“未就绪”）
+11. **最低工资静默换成别的城市**：`wages.get(省, 市)` 在「指定了市但内置表里没有」时会返回该省**第一个**
+    城市的数字 → 相当于把另一个地方的标准写进账本（还联动加班基数 / 公积金基数），用户看不出来。
+    改为返回 `None`（调用方本来就判 `is not None`；顺带去掉这类误报的“与内置表不一致”提醒）
+12. **节假日日型判定有两套优先级**：内置表走 `day_kind()`（法定→补班→放假），API 铺设写的是
+    （补班→法定→放假）→ 同一天在两处会得到不同结论。抽出 `holidays.classify_day()`（关键字传参，
+    防把 rest / makeup 写反）作为全项目唯一判定；`_year_sets` 提升为公开 `year_sets()`
+    （`wages` 与 `pages_calendar` 都在用，顺手去掉两个 `# type: ignore`）
+13. **添加工资项菜单每次弹出都泄漏一组子菜单**：子菜单的 parent 是本菜单，
+    `clear()` 只删“直接属于本菜单”的 action，管不到它们。改为记在 `_subs` 里、rebuild 时
+    `deleteLater()`；顺手删掉永远走不到的 `else: self.exec_()`（`exec_` 是弃用别名，走到就 AttributeError）
+14. **工资项列宽三处打架**：数据行 `setFixedWidth(150)` 紧接着被 `setMinimumWidth(110)` /
+    `setMaximumWidth(180)` 覆盖 → 与表头的固定值对不齐。改为只认 `PAYITEM_COL_WIDTHS["std"]`
+15. **「滚到新行」静默失效**：`ensure_visible_row` 写死 `parent().parent()`，而真实层级是
+    `pay_items → ResponsiveColumns → salary_root(滚动区)` → 永远找不到滚动区、什么都不做。
+    改为沿父链往上找第一个 `ensureWidgetVisible`
+16. **`config.py` 里 13 个“改了没效果”的死常量**（chip 字号 / 删除按钮配色 / 输入框边框 /
+    列头颜色 / 空提示底色 …）＋ 几处与实现不符的过期注释。
+    死常量已删，注释改成真话：QSS 用的是 `style.py` 里的独立字面量，加班倍率写死在 `calc.py`
+17. **文档字符串描述不存在的成员**：加班卡片里那个并未保存成属性的“每档总额”、
+    个人扣除卡片并未公开的“total”、刷新月小计的签名写多了一个参数、
+    卡片框架 `add_layout` 那句“锁定要调用方自己管”（其实会递归）已全部改正

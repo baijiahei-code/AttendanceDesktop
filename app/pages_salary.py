@@ -45,8 +45,8 @@ class SalaryPageMixin:
         self._salary_modify_widgets: list = []
 
         # —— 🔒 只读模式提示横幅（锁定时才显示）——
-        self._lock_banner = make_lock_banner()
-        lay.addWidget(self._lock_banner)
+        self._salary_lock_banner = make_lock_banner()
+        lay.addWidget(self._salary_lock_banner)
 
         # —— 顶部金额 strip ——
         self._salary_strip = SalaryStripWidget()
@@ -121,7 +121,7 @@ class SalaryPageMixin:
                 self.pay_items.set_locked_mode(locked)
             except Exception:
                 pass
-        show_lock_banner(getattr(self, "_lock_banner", None), locked)
+        show_lock_banner(getattr(self, "_salary_lock_banner", None), locked)
         # 月份解锁（非整月只读）后：重放字段级锁，避免「个税自动 / 加班基数锁」
         # 对应的输入框被 setEnabled(True) 一并放开。
         if not locked:

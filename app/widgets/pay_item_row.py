@@ -1,4 +1,4 @@
-"""工资项单行 widget —— 替代原 SalaryPageMixin._pi_append_row 巨方法。
+"""工资项单行 widget。
 
 类边界的考虑：
 * 单条工资项的所有「视觉与交互」都集中在这里一处。
@@ -12,7 +12,7 @@
 * delete_requested()：用户点 ✕
 
 公开槽：
-* refresh_totals(work_count, per_day_mode)：外部重算后调用，根据 work 与是否按出勤刷新月小计
+* refresh_totals(work_count)：外部重算后调用，根据 work_count 刷新月小计与金额框后缀
 * refresh_chip()：强制刷新 chip（重命名后想立即显示也行）
 * set_amount(value)：程序设置金额（不触发循环）
 * set_name(value)
@@ -57,9 +57,10 @@ class PayItemRow(QFrame):
         hl.setSpacing(8)
         widths = config.PAYITEM_COL_WIDTHS
         self._chip.setFixedWidth(widths["type"])
+        # 「标准」列宽度只认 PAYITEM_COL_WIDTHS["std"]（表头读的是同一个值）。
+        # ⚠ 这里以前还跟着 setMinimumWidth(110)/setMaximumWidth(180)，会把
+        # setFixedWidth 直接覆盖掉 → 数据行与表头列宽对不齐。
         self._amount.setFixedWidth(widths["std"])
-        self._amount.setMinimumWidth(110)
-        self._amount.setMaximumWidth(180)
         self._rowsub.setFixedWidth(widths["sub"])
         self._delb.setFixedSize(widths["op"], widths["op"])
         hl.addWidget(self._chip)
@@ -156,7 +157,10 @@ class PayItemRow(QFrame):
         self._chip.setToolTip(model.PAYITEM_TYPE_DESC.get(ptype, ""))
 
     def refresh_totals(self, work_count: int):
-        """根据 work_count 重算月小计与金额框 suffix。"""
+        """根据 work_count 重算月小计与金额框 suffix。
+
+        「按出勤」项（``item.is_per_day()``）才乘天数；其它项直接取金额。
+        """
         per = self.item.is_per_day()
         self._amount.setSuffix(" 元/天" if per else " 元")
         sub = self.item.amount * work_count if per else self.item.amount

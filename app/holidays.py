@@ -52,8 +52,12 @@ _YEAR_DATA: dict[int, dict[str, list]] = {
 _cache: dict[int, dict[str, set[str]]] = {}
 
 
-def _year_sets(year: int) -> dict[str, set[str]] | None:
-    """展开某年的 {statutory/rest/makeup: "MM-DD" 集合}，未收录返回 None。"""
+def year_sets(year: int) -> dict[str, set[str]] | None:
+    """展开某年的 {statutory/rest/makeup: "MM-DD" 集合}，未收录返回 None。
+
+    公开 API：``wages._holidays_from_local`` 与 ``pages_calendar._apply_holidays``
+    都要拿这份原始集合（前者要与 API 返回同构，后者要做差异核对）。
+    """
     if year in _cache:
         return _cache[year]
     data = _YEAR_DATA.get(year)
@@ -79,16 +83,30 @@ def has_year(year: int) -> bool:
     return year in _YEAR_DATA
 
 
-def day_kind(year: int, month: int, day: int) -> str | None:
-    """返回某天类型：statutory / rest / makeup；未收录或普通日返回 None。"""
-    sets = _year_sets(year)
-    if sets is None:
-        return None
-    key = f"{month:02d}-{day:02d}"
-    if key in sets["statutory"]:
+def classify_day(key: str, *, statutory: set[str], rest: set[str],
+                 makeup: set[str]) -> str | None:
+    """把某个 "MM-DD" 归类为 ``statutory`` / ``rest`` / ``makeup``；普通日返回 None。
+
+    ⚠ **优先级全项目只有这一处**（法定 → 补班 → 放假），参数限定关键字传参，
+    避免调用方把 rest / makeup 写反。
+
+    为什么必须只有一份：正常数据里三者互斥，但联网查回来的数据是模型生成的，
+    真会把同一天既列进放假区间又列进补班日 —— 两条链路（内置官方表 / API）
+    必须给出同一个答案，否则同一天在不同入口会铺成两种结果。
+    """
+    if key in statutory:
         return "statutory"
-    if key in sets["makeup"]:
+    if key in makeup:
         return "makeup"
-    if key in sets["rest"]:
+    if key in rest:
         return "rest"
     return None
+
+
+def day_kind(year: int, month: int, day: int) -> str | None:
+    """返回某天类型：statutory / rest / makeup；未收录或普通日返回 None。"""
+    sets = year_sets(year)
+    if sets is None:
+        return None
+    return classify_day(f"{month:02d}-{day:02d}", statutory=sets["statutory"],
+                        rest=sets["rest"], makeup=sets["makeup"])

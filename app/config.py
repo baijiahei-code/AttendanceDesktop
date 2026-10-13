@@ -1,17 +1,20 @@
 """集中存放「用户想改时只需要碰这一个文件」的常量。
 
-⚠️ 这是「样式 / 数值」单一来源 —— 改了这里，所有用到的页面自动生效。
+⚠️ 这里是「样式 / 数值」单一来源 —— 列在下面的常量都是**真被代码读到的**，
+改了立刻生效。（改不生效的“看着像旋钮”的常量一律不留，避免浪费时间。）
 
 下列常量按用途分组，全部是「修改高频」的视觉/UI 参数：
 
 * :data:`TYPE_CHIP`         —— 4 类工资项的 chip 配色（短名 / 前景 / 浅底 / 边框）
-* :data:`PAYITEM_COL_WIDTHS`—— 工资项表格列宽（与 _pi_append_row 中的控件一致）
-* :data:`OVERTIME_RATE`     —— 加班三档倍率、显示文、配色
-* :data:`KEY_COLORS`        —— 其他高频键值映射（删除按钮 / 名称输入框 / 卡头条）
+* :data:`PAYITEM_COL_WIDTHS`—— 工资项表格列宽（表头与数据行读同一份，见
+  ``widgets/pay_item_list.py`` 与 ``widgets/pay_item_row.py``）
+* :data:`OVERTIME_RATE`     —— 加班三档的**显示文与配色**（计算倍率在 ``calc.py``）
+* :data:`KEY_COLORS`        —— 其他高频键值映射（卡头条等）
 
 不放在这里的内容：
 * 工资项名称目录（→ model.PAYITEM_CATALOG）
 * 状态标签 / 调休规则（→ model）
+* 控件级 QSS（→ style.py；那里用的是独立字面量，不读本文件）
 """
 from __future__ import annotations
 
@@ -33,24 +36,22 @@ TYPE_DOT: dict[str, str] = {k: v[1] for k, v in TYPE_CHIP.items()}
 # 想让「名称」列更宽？改 :data:`PAYITEM_COL_WIDTHS["name"]`。
 PAYITEM_COL_WIDTHS: dict[str, int] = {
     "type": 86,   # 类型 chip
-    "name": 0,    # 0 = stretch，列宽跟容器伸缩
+    # 名称列**恒为 stretch**（表头与数据行都传固定值 0/伸展因子 1），
+    # 这里的 0 只是占位说明「不设固定宽度」——改数值不会生效。
+    "name": 0,
     "std":  150,  # 标准（月固定/元/天）
     "sub":  110,  # 月小计
     "op":   36,   # 操作（删除按钮）
 }
 PAYITEM_ROW_BUTTON_HEIGHT: int = 30   # 行内按钮/chip 高度上限
-PAYITEM_CHIP_FONT_PX: float = 11.5    # chip 字号
-PAYITEM_NAME_INPUT_BG: str = "transparent"  # 名称输入框常态背景
-PAYITEM_DELETE_COLOR: str = "#98A2B3"
-PAYITEM_DELETE_HOVER_BG: str = "#FEE2E2"
-PAYITEM_DELETE_HOVER_FG: str = "#B91C1C"
 
 
 # ─── 加班倍率（三档：显示文 / 倍数 / 配色）───
 # 想加一档「×4 病假」？复制一行就 OK。
 #   key     ：model / calc 中的小时字段后缀
 #   display ：卡片里展示的徽章文字
-#   multiplier：用于报表计算（如果改了显示文，记得同步 model/calc）
+#   multiplier：**仅供显示与文档**（真正的计算写死在 calc.py 的
+#              overtime_wage_* 三行里；改这里的倍数不会改金额）
 #   fg / bg ：徽章前景与底色
 OVERTIME_RATE: dict[str, tuple[str, float, str, str]] = {
     "workday": ("×1.5", 1.5, "#15803D", "#DCFCE7"),  # 工作日 × 1.5
@@ -89,18 +90,7 @@ MONEY_FMT: str = "¥ {:,.2f}"  # 月小计 / 应发 / 扣除 等都用这个格�
 # ─── 行行为 ───
 PAYITEM_ROW_SPACING: int = 3     # 工资项列表中每行之间的间距
 PAYITEM_ROW_PADDING: int = 2     # 工资项单行的上下内边距
-PAYITEM_LINEEDIT_BORDER: str = "1px solid #E6E8F0"     # 名称输入框 hover 边框
-PAYITEM_LINEEDIT_FOCUS: str = "1px solid #6366F1"       # 名称输入框 focus 边框
 
 
 # ─── 头部列头 ───
 PAYITEM_HEADER_HEIGHT: int = 22
-PAYITEM_HEADER_FONT_PX: float = 10.5
-PAYITEM_HEADER_FG: str = "#98A2B3"
-PAYITEM_HEADER_RULE: str = "1px solid #E6E8F0"          # 头部下方分隔线
-
-
-# ─── 通用空提示 ───
-EMPTY_HINT_BG: str = "#FEF4E6"
-EMPTY_HINT_FG: str = "#B54708"
-EMPTY_HINT_BORDER: str = "1px solid #FEDF89"

@@ -19,15 +19,17 @@ from PySide6.QtWidgets import (
 from . import calc, crypto, model, worker
 from .storage import MonthStore
 from .style import STYLE
-from .ui import PAGES, PAGE_TITLES, ReflowScrollArea
+from .ui import (NAV_GROUPS, NO_MONTH_BAR_KEYS, PAGES, PAGE_INDEX, PAGE_TITLES,
+                 ReflowScrollArea)
 from .pages_annual import AnnualPageMixin
 from .pages_calendar import CalendarPageMixin
 from .pages_overview import OverviewPageMixin
 from .pages_params import ParamsPageMixin
 from .pages_report import ReportPageMixin
 from .pages_salary import SalaryPageMixin
+from .pages_units import UnitsPageMixin
 
-class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
+class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPageMixin,
                  ParamsPageMixin, ReportPageMixin, AnnualPageMixin, QMainWindow):
 
     def __init__(self, store: MonthStore):
@@ -138,21 +140,29 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         v.addWidget(sub)
         v.addSpacing(12)
 
-        sec = QLabel("功 能")
-        sec.setObjectName("sideSec")
-        v.addWidget(sec)
-
+        # —— 导航：按 ui.NAV_GROUPS 分组渲染（分组标题在 ui.py 里，别在这儿另写一份）——
+        # 「相关单位」是单位档案性质的独立入口、不随月份走 → 刻意排在「功 能」分组**之外**
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
-        self.nav_btns = []
-        for i, (_, label) in enumerate(PAGES):
-            b = QPushButton(label)
-            b.setObjectName("navBtn")
-            b.setCheckable(True)
-            b.setCursor(Qt.PointingHandCursor)
-            self.nav_group.addButton(b, i)
-            self.nav_btns.append(b)
-            v.addWidget(b)
+        # ⚠ nav_btns 必须是**页面索引顺序**（_show_page 用 enumerate 判断选中项），
+        #   所以先建定长列表再按索引填，不能按显示顺序 append。
+        self.nav_btns: list[QPushButton] = [None] * len(PAGES)
+        for gi, (title, keys) in enumerate(NAV_GROUPS):
+            if gi:
+                v.addSpacing(14)      # 分组之间留白
+            if title:
+                lab = QLabel(title)
+                lab.setObjectName("sideSec")
+                v.addWidget(lab)
+            for key in keys:
+                i = PAGE_INDEX[key]
+                b = QPushButton(PAGES[i][1])
+                b.setObjectName("navBtn")
+                b.setCheckable(True)
+                b.setCursor(Qt.PointingHandCursor)
+                self.nav_group.addButton(b, i)
+                self.nav_btns[i] = b
+                v.addWidget(b)
         self.nav_group.idClicked.connect(self._show_page)
         v.addSpacing(14)
 
@@ -187,6 +197,7 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         cl = QVBoxLayout(col)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(0)
+        self._main_lay = cl      # 月份条会在「相关单位」页被摘掉 / 装回（_sync_month_bar）
 
         # 顶栏
         header = QFrame()
@@ -227,7 +238,8 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         self._about_btn = about_btn
         cl.addWidget(header)
 
-        # 月份操作条
+        # 月份操作条（上月 / 月份选择 / 锁定 / 下月 / 删除本月）
+        # ⚠ 它在「相关单位」页会被 _sync_month_bar() 从本布局里摘掉（该页与月份无关）。
         monthbar = QFrame()
         monthbar.setObjectName("monthbar")
         mb = QHBoxLayout(monthbar)
@@ -263,6 +275,7 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         del_btn.clicked.connect(self._delete_month)
         mb.addWidget(del_btn)
         cl.addWidget(monthbar)
+        self._month_bar = monthbar
 
         # 页面
         self.stack = QStackedWidget()
@@ -291,12 +304,13 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
             self._apply_responsive_layouts()
             for i, b in enumerate(self.nav_btns):
                 b.setChecked(i == idx)
+            self._sync_month_bar()
             title, sub = PAGE_TITLES[key]
             self.page_title.setText(title)
             self.page_sub.setText(sub)
             # 进入重数据页时，按版本判断是否要重建——避免每次进来都重画
             if key in ("overview", "report"):
-                page_idx = 0 if key == "overview" else 4
+                page_idx = PAGE_INDEX[key]
                 if self._last_result is None:
                     self._recalc()
                 elif self._rendered_versions.get(page_idx, -1) < self._data_version:
@@ -313,6 +327,30 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
                     self._update_cal_count()
             elif key == "annual":
                 self._fill_annual()
+
+    def _sync_month_bar(self) -> None:
+        """月份操作条（上月 / 月份 / 锁定 / 下月 / 删除本月）的**存在性**。
+
+        不靠 `setVisible(False)` 藏起来 —— 对「与月份无关」的页面（见
+        :data:`ui.NO_MONTH_BAR_KEYS`，目前是「相关单位」）**直接把这条从主栏
+        布局里摘出去**，离开该页时再装回原位（页题栏与页面栈之间）。
+        切页与切换月份各调一次，两条路径都对。
+        """
+        bar = getattr(self, "_month_bar", None)
+        lay = getattr(self, "_main_lay", None)
+        if bar is None or lay is None:
+            return
+        key = (PAGES[self._current_page_idx][0]
+               if 0 <= self._current_page_idx < len(PAGES) else "")
+        attached = lay.indexOf(bar) >= 0
+        if key in NO_MONTH_BAR_KEYS:
+            if attached:
+                lay.removeWidget(bar)      # 真正摘掉（不再占据布局位置）
+                bar.hide()
+            return
+        if not attached:
+            lay.insertWidget(lay.indexOf(self.stack), bar)   # 装回页面栈之前
+            bar.show()
 
     # ================= 月份 =================
 
@@ -590,6 +628,8 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
             else:
                 self.save_btn.setToolTip("")
         # —— 各页面锁定模式（每个 mixin 实现自己的 _set_xxx_locked，避免方法名冲突）——
+        # ⚠ 「相关单位」**不在其中**：它的数据是全局的（存在 settings，与月份无关），
+        #    可改性只由它自己那把锁控制（见 pages_units）。
         for hook in ("_set_params_locked", "_set_calendar_locked", "_set_salary_locked"):
             fn = getattr(self, hook, None)
             if callable(fn):
@@ -631,6 +671,8 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         self._refresh_history()
         # 锁定只读：切月后立即把状态机推到对应模式（UI + API）
         self._apply_lock_state(bool(self._book.locked))
+        # 重建页面后重新确定月份操作条显隐（可能正停在「相关单位」页切月）
+        self._sync_month_bar()
 
     def _build_pages(self):
         # 参数
@@ -638,6 +680,7 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
             self._init_page_widgets()
         # 每次重建内容
         self._fill_overview()
+        self._fill_units()
         self._fill_params()
         self._fill_calendar()
         self._fill_salary()
@@ -667,6 +710,10 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         # overview（工作台）
         self.overview_page = QWidget()
         self.overview_area = _scroll_for(self.overview_page)
+        # units（相关单位）
+        self.units_page = QWidget()
+        self.units_root = self.units_page
+        self.units_area = _scroll_for(self.units_page)
         # calendar（考勤）
         self.calendar_page = QWidget()
         self.calendar_area = _scroll_for(self.calendar_page)
@@ -683,8 +730,9 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         self.annual_lay.setSpacing(12)
         self._annual_year = None
 
-        self.pages_widget = [self.overview_area, self.calendar_area, self.salary_area,
-                             self.params_scroll, self.report_area, self.annual_page]
+        self.pages_widget = [self.overview_area, self.units_area, self.calendar_area,
+                             self.salary_area, self.params_scroll, self.report_area,
+                             self.annual_page]
         for w in self.pages_widget:
             self.stack.addWidget(w)
         self._params_ready = True
@@ -727,9 +775,9 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
 
     def _render_one_page(self, page_idx: int, r):
         """按需渲染单个重数据页（被 _render_all 和 _show_page 共用）。"""
-        if page_idx == 0:
+        if page_idx == PAGE_INDEX["overview"]:
             self._render_overview(r)
-        elif page_idx == 4:
+        elif page_idx == PAGE_INDEX["report"]:
             self._render_report(r)
 
     def _recalc(self):
@@ -744,16 +792,16 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
 
     def _render_all(self, r):
         """只刷新当前可见页 + 始终刷新的轻量统计。
-        避免每次 _changed 都把全部 6 个页面的 widget 拆掉重建。"""
+        避免每次 _changed 都把全部 7 个页面的 widget 拆掉重建。"""
         self._last_result = r
         self._data_version += 1
         # 始终：薪酬 strip / 日历 chip 都要拿到新 _last_result
         if hasattr(self, "_cal_chip_labs"):
             self._update_cal_count()
-        if self._current_page_idx == 2:  # salary
+        if self._current_page_idx == PAGE_INDEX["salary"]:
             self._sync_salary_ui()
         # 仅当前页做布局级重建
-        if self._current_page_idx in (0, 4):
+        if self._current_page_idx in (PAGE_INDEX["overview"], PAGE_INDEX["report"]):
             self._render_one_page(self._current_page_idx, r)
             self._rendered_versions[self._current_page_idx] = self._data_version
         # annual / params / calendar 各自管自己的 widget，年度汇总靠 _fill_annual 在切页时刷新
@@ -773,7 +821,7 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
             self._data_version += 1
             if hasattr(self, "_cal_chip_labs"):
                 self._update_cal_count()
-            if self._current_page_idx == 2:  # salary
+            if self._current_page_idx == PAGE_INDEX["salary"]:
                 self._sync_salary_ui()
         except Exception:
             # 静默：合并定时器里会再算一次并报告错误
@@ -799,7 +847,7 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
                 self._data_version += 1
                 if hasattr(self, "_cal_chip_labs"):
                     self._update_cal_count()
-                if self._current_page_idx == 2:
+                if self._current_page_idx == PAGE_INDEX["salary"]:
                     self._sync_salary_ui()
                 return True
             self._render_all(r)
@@ -854,8 +902,12 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
             info = crypto.describe(getattr(self.store, "key_dir", None))
         except Exception as ex:
             return "检测失败：" + str(ex)
-        if info["backend"] == "plain":
+        mode = info["backend"]
+        if mode == "plain":
             return "未加密（明文存储）"
+        if mode == "dpapi":
+            # Windows：系统 DPAPI 托管密钥，没有密钥文件，也不涉及国密算法
+            return f"{info['algorithms']}"
         ready = "密钥已就绪" if info["key_ready"] else "密钥将在首次保存时生成"
         return f"{info['algorithms']}（{ready}）"
 
@@ -883,12 +935,18 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
     # 否则 150ms 后自动保存的「已保存 12:34:56」会把它顶掉，提示等于没显示。
     STATUS_HOLD_MS = 3000
     STATUS_HOLD_MS_ERR = 6000   # 失败提示更需要看清
+    # 「已复制到剪贴板」这类**要去别的窗口用**的提示：停留久一点，
+    # 否则用户还在浏览器里、后台自动保存的「已保存」就把它顶掉了
+    STATUS_HOLD_MS_CLIP = 60_000
 
-    def _set_status(self, text, ok=True, *, background: bool = False):
+    def _set_status(self, text, ok=True, *, background: bool = False,
+                    hold_ms: int | None = None):
         """更新底部状态栏。
 
         :param background: True 表示「后台动作的反馈」（如自动保存完成）。
             若此刻正处于上一条业务提示的驻留期内，则跳过不覆盖。
+        :param hold_ms: 本条提示的驻留时长（毫秒）；默认按成败取
+            :data:`STATUS_HOLD_MS` / :data:`STATUS_HOLD_MS_ERR`。
         """
         if not hasattr(self, "status_label"):
             return
@@ -899,7 +957,8 @@ class MainWindow(OverviewPageMixin, CalendarPageMixin, SalaryPageMixin,
         self.status_label.setObjectName("statusOk" if ok else "statusErr")
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
-        hold = self.STATUS_HOLD_MS if ok else self.STATUS_HOLD_MS_ERR
+        hold = (hold_ms if hold_ms is not None
+                else self.STATUS_HOLD_MS if ok else self.STATUS_HOLD_MS_ERR)
         self._status_hold_until = now + hold / 1000.0
 
     def closeEvent(self, event):

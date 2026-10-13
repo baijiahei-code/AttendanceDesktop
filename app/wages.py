@@ -715,13 +715,16 @@ def get_regions(province: str) -> list[str]:
 
 def get(province: str, region: str | None = None) -> tuple[float, float] | None:
     """返回 (月最低工资, 非全日制小时最低工资)。
-    region 为 None 时取该省第一个城市；未收录返回 None。"""
+
+    * ``region=None`` → 取该省第一个城市（“全省未细分”的场景）；
+    * 「指定了具体地区但表里查不到」→ 返回 ``None``（**不要静默换成别的城市**：
+      那会把另一个地方的标准写进账本，还联动加班基数 / 公积金基数，用户看不出来）。
+    """
     regions = _REGION_DATA.get(province)
     if not regions:
         return None
-    if region and region in regions:
-        return regions[region]
-    # 未指定 region → 取第一项
+    if region:
+        return regions.get(region)
     return next(iter(regions.values()))
 
 
@@ -1110,7 +1113,7 @@ def fetch_holidays_api(api_url: str | None, api_key: str | None,
 def _holidays_from_local(year: int) -> dict | None:
     """从 holidays.py 本地数据读取节假日安排（结构与 API 返回一致）。"""
     from . import holidays
-    sets = holidays._year_sets(year)  # type: ignore[attr-defined]
+    sets = holidays.year_sets(year)
     if sets is None:
         return None
     return {

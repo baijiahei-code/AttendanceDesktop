@@ -196,11 +196,19 @@ class PayItemListWidget(QFrame):
             self._show_empty_tip()
 
     def ensure_visible_row(self, row: PayItemRow):
-        """滚到指定行可见（聚焦时调用）。"""
-        if self.parent() is not None:
-            area = self.parent().parent()
-            if isinstance(area, QWidget) and hasattr(area, "ensureWidgetVisible"):
+        """滚到指定行可见（聚焦时调用）。
+
+        ⚠ 本 widget 的直接父级**不是**滚动区（父链通常长成
+        ``pay_items → ResponsiveColumns → salary_root(此层才是滚动区)``），
+        所以必须沿父链往上找第一个能 ``ensureWidgetVisible`` 的控件；
+        一路找不到就安静返回（不报错，也不假设层级）。
+        """
+        area = self.parentWidget()
+        while area is not None:
+            if hasattr(area, "ensureWidgetVisible"):
                 area.ensureWidgetVisible(row)
+                return
+            area = area.parentWidget()
 
     # ---------------------------------------------------------------------
     # 添加按钮 / 菜单

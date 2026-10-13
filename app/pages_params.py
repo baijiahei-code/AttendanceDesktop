@@ -36,8 +36,8 @@ class ParamsPageMixin:
         self._params_extra_modify_widgets: list = []
 
         # —— 🔒 只读模式提示横幅（锁定时才显示）——
-        self._lock_banner = make_lock_banner()
-        lay.addWidget(self._lock_banner)
+        self._params_lock_banner = make_lock_banner()
+        lay.addWidget(self._params_lock_banner)
 
         # —— 参数模板条 ——
         tpl = Card(title="", variant="default", margins=(16, 10, 16, 10))
@@ -173,7 +173,7 @@ class ParamsPageMixin:
         for sp in (getattr(self, "_param_spins", {}) or {}).values():
             set_field_locked(sp, locked)
         # 4) 锁定横幅
-        show_lock_banner(getattr(self, "_lock_banner", None), locked)
+        show_lock_banner(getattr(self, "_params_lock_banner", None), locked)
         # 5) 月份解锁（非整月只读）后：重放字段级锁定，避免最低工资相关字段被一并解锁
         if not locked:
             self._apply_param_field_locks()
@@ -213,7 +213,10 @@ class ParamsPageMixin:
         box.setSpacing(3)
         lab_l = QLabel(label)
         lab_l.setObjectName("fldLabel")
-        spin = NumberSpin(decimals=decimals, step=step)
+        # minimum=0：参数页这些字段全是「基数 / 比例 / 工时 / 天数 / 最低工资」，
+        # 负数没有意义；尤其 hours_per_day 会被拿去当分母（工时为 0 或负数
+        # 会让核算出现除零/负值），从输入端就挡住。
+        spin = NumberSpin(decimals=decimals, step=step, minimum=0.0)
         spin.setValue(float(getattr(self._book, attr) or 0.0))
         if suffix:
             spin.setSuffix(f" {suffix}")
@@ -711,10 +714,10 @@ class ParamsPageMixin:
         settings = self.store.load_settings()
         api_url = settings.get("api_url", "")
         if api_url:
-            model = settings.get("api_model") or "（未填，联网查询会失败）"
+            api_model = settings.get("api_model") or "（未填，联网查询会失败）"
             key_tag = "已填 Key" if settings.get("api_key") else "无 Key（供不校验 Key 的网关）"
             self._api_hint_label.setText(
-                f"✅ 已配置 API：{api_url} · 模型 {model} · {key_tag}\n"
+                f"✅ 已配置 API：{api_url} · 模型 {api_model} · {key_tag}\n"
                 "「🌐 联网查询」「🌐 API 一键铺」会用它；点「📋 用本地表」则完全不联网")
         else:
             self._api_hint_label.setText(
@@ -833,6 +836,8 @@ class ParamsPageMixin:
         # ⚠ 实测（2026-10-07）：模型可能给成别省/过期的数字（例：安徽·合肥 应 2320，
         # 模型给 2490）—— 两个数额都要显示；与内置官方表不一致时必须提醒核对。
         nums = f"月 {monthly:g} / 时 {hourly:g} 元"
+        # local 为 None = 「指定了地区但内置表里没这个城市」→ 不做比对：
+        # 不能拿省内第一个城市的数字来判定 API 结果对错（那是另一个地方的标准）。
         local = wages.get(province, region)
         if local is not None and (abs(local[0] - monthly) >= 1.0
                                   or abs(local[1] - hourly) >= 0.5):
@@ -961,6 +966,7 @@ class ParamsPageMixin:
             for attr, spin in self._param_spins.items():
                 out[attr] = spin.value()
         if self._book is not None:
+            # 注意：相关单位**不进模板**（它跟参数模板无关）——单位表在「相关单位」页单独维护
             out["note"] = self._book.note
         return out
 
@@ -1018,6 +1024,7 @@ class ParamsPageMixin:
                             setattr(self._book, attr, v)
                 if "note" in p:
                     self._book.note = str(p.get("note") or "")
+                # 模板里可能残留旧版本的 "units" 键 —— 直接忽略（相关单位不归模板管）
                 self._loading = False
                 self._changed()
                 self._set_status(f"已套用模板：{name}", True)

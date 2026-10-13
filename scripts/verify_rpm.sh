@@ -86,13 +86,18 @@ if [ -x "$launcher" ]; then
     # 运行日志放进解包目录：它随着开头的 EXIT trap 一起被清掉，不在 /tmp 留垃圾
     run_log="$tmp/run.log"
     set +e
-    QT_QPA_PLATFORM=offscreen timeout 8 "$launcher" > "$run_log" 2>&1
+    # ⚠ 这两个环境变量必须先设好，否则这项检查不可靠：
+    #   ATT_ALLOW_MULTI=1     → 绕开单实例保护（用户开着已安装版时，新进程会唤醒
+    #                           已有实例后 exit 0，这里永远拿不到 124）
+    #   ATT_DATA_DIR=临时目录 → 不该让冻结包去打开用户真实数据目录
+    ATT_ALLOW_MULTI=1 ATT_DATA_DIR="$tmp/data" QT_QPA_PLATFORM=offscreen \
+        timeout 8 "$launcher" > "$run_log" 2>&1
     code=$?
     set -e
     if [ "$code" -eq 124 ]; then
         echo "  [OK] 启动成功并持续运行（被 timeout 终止）"
     elif [ "$code" -eq 0 ]; then
-        echo "  [注意] 程序自行退出了（码 0），请查看日志"
+        echo "  [注意] 程序自行退出了（码 0）—— 已绕开单实例，正常应一直运行，请查看日志"
     else
         echo "  [FAIL] 启动异常，退出码 $code，日志："
         tail -20 "$run_log"

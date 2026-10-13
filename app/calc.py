@@ -237,9 +237,12 @@ def compute(book: model.MonthBook) -> Result:
     r.take_home = _round2(r.after_deduction - r.leave_deduction_total)
     r.take_home_hourly = _round2((r.after_deduction - r.leave_deduction_total) / r.monthly_work_hours
                                   if r.after_deduction > 0 and r.monthly_work_hours > 0 else 0.0)
+    # 公司每小时成本：分母 = 提供正常劳动天数 × 每日工时。
+    # ⚠ 两个因子都可能为 0（hours_per_day 用户可以填 0，存档也可能被手改），
+    #   所以必须对整个乘积判 > 0 —— 只判天数会让这里除零崩掉整个核算。
+    _cost_hours = counts.normal_labor_days * s.hours_per_day
     r.company_hourly_cost = _round2((r.gross_wage + (r.company_social + r.company_fund))
-                                    / (counts.normal_labor_days * s.hours_per_day)
-                                    if counts.normal_labor_days > 0 else 0.0)
+                                    / _cost_hours if _cost_hours > 0 else 0.0)
 
     # 合规
     r.min_wage_status = "不低于月最低工资标准" if r.wage_components_total >= s.min_wage else "低于月最低工资标准"

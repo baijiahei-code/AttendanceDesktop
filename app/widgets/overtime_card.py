@@ -1,4 +1,4 @@
-"""加班工资卡片 —— 替代原 SalaryPageMixin._build_ot_card 内联方法。
+"""加班工资卡片。
 
 结构：
 * 标题 + 提示
@@ -7,12 +7,14 @@
 * 加班费基数 spin + 锁按钮
 * 三档金额 + 加班小计（= 固定加班工资 + 三档加班工资）
 
-公开 signals / attrs：
+公开 attrs：
 * :attr:`spins`：所有 NumberSpin 的字典（外部按 attr 读写 book）
-* :attr:`ot_totals`：dict[str, QLabel]，每档的金额标签
-* :attr:`total`：加班小计标签
-* :attr:`lock_btn`：锁按钮（外部监听点击）
-* :meth:`sync(r)`：根据 calc 结果刷新金额
+* :attr:`total`：加班工资小计的 QLabel（= 固定加班工资 + 三档加班工资）
+* :attr:`lock_btn`：加班费基数锁按钮（外部监听点击）
+* :meth:`sync(r, book)`：根据 calc 结果刷新三档金额与加班小计
+
+注：三档各自的「金额」标签是局部变量（建布局时顺手加进去，没存成属性），
+外部要刷新只能调 ``sync()``。
 """
 from __future__ import annotations
 

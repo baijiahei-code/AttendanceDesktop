@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QVBoxLayout, QSizePolicy,
 )
 
-from . import model, wages, worker
+from . import holidays, model, wages, worker
 from .ui import (DAY_PALETTE, STATUS_ORDER, NumberSpin, ResponsiveColumns,
                  make_lock_banner, set_busy_button, show_lock_banner)
 from .widgets import Card
@@ -32,8 +32,8 @@ class CalendarPageMixin:
         self._calendar_cards: list[Card] = []
 
         # —— 🔒 只读模式提示横幅（锁定时才显示）——
-        self._lock_banner = make_lock_banner()
-        lay.addWidget(self._lock_banner)
+        self._calendar_lock_banner = make_lock_banner()
+        lay.addWidget(self._calendar_lock_banner)
 
         bar = QHBoxLayout()
         bar.setSpacing(8)
@@ -158,7 +158,7 @@ class CalendarPageMixin:
                 except Exception:
                     pass
         # 4) 锁定横幅
-        show_lock_banner(getattr(self, "_lock_banner", None), locked)
+        show_lock_banner(getattr(self, "_calendar_lock_banner", None), locked)
 
     def _build_day_panel(self):
         panel = Card(title="", variant="default", margins=(14, 12, 14, 12))
@@ -511,14 +511,17 @@ class CalendarPageMixin:
             old_mark = d.mark
             new_status = None
             new_mark = d.mark
-            if key in makeup:
+            # 归类只调 holidays.classify_day（与内置官方表同一条优先级）
+            kind = holidays.classify_day(key, statutory=statutory, rest=rest,
+                                        makeup=makeup)
+            if kind == "makeup":
                 # 调休补班日：上班
                 new_status = "上班"
-            elif key in statutory:
+            elif kind == "statutory":
                 # 法定节假日：休息 + 法定标记
                 new_status = "休息"
                 new_mark = 1
-            elif key in rest:
+            elif kind == "rest":
                 # 放假调休区间（非法定的拼假休息日）：休息
                 new_status = "休息"
             elif is_weekend:
@@ -538,8 +541,7 @@ class CalendarPageMixin:
             # （11/31/7 → 12/32/12），还会把 2025 年春节当成 2026 的（1/28~31 vs 2/16~19）。
             # 按用户口径仍然采用 API 结果，但必须把与内置官方表的差异摆出来让其核对。
             try:
-                from . import holidays as _holidays
-                _sets = _holidays._year_sets(y)  # type: ignore[attr-defined]
+                _sets = holidays.year_sets(y)
             except Exception:  # noqa: BLE001 - 校验失败不该影响铺设
                 _sets = None
             if _sets:

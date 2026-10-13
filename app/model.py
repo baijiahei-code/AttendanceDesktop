@@ -70,6 +70,110 @@ PAYITEM_CATALOG = {
 }
 
 
+# ====== 相关单位：同一段劳动关系里可能涉及多家单位 ======
+#
+# 现实中「签合同的公司」「缴社保的公司」「发工资的公司」「实际干活的单位」
+# 经常不是同一个（集团 / 分公司 / 劳务派遣 / 社保代缴 / 工资代发等），
+# 分开登记便于核对，也便于判断工龄、社保连续性与责任主体。
+#
+# 每项 = (key, 显示名, 第二列占位文字, 说明)。key 一旦发布不要改（存档兼容）。
+UNIT_ROLES = [
+    ("contract", "劳动合同签订单位", "统一社会信用代码",
+     "劳动合同上的用人单位（甲方）"),
+    ("social", "社保缴纳单位", "统一社会信用代码",
+     "实际缴纳社会保险的参保单位（代缴时可能与签订单位不同）"),
+    ("fund", "公积金缴纳单位", "统一社会信用代码",
+     "住房公积金缴存单位"),
+    ("wage", "工资发放单位", "统一社会信用代码",
+     "实际发放工资的主体（委托代发 / 由集团统一发放时不同于签订单位）"),
+    ("tax", "个税扣缴单位", "统一社会信用代码",
+     "个人所得税代扣代缴义务人"),
+    ("work", "实际用工单位", "统一社会信用代码",
+     "员工实际工作 / 被派驻的单位（如考勤与工资不在同一主体）"),
+    ("dispatch", "劳务派遣单位", "统一社会信用代码",
+     "派遣方（非劳务派遣时不用添加）"),
+    ("outsourcing", "外包单位", "统一社会信用代码",
+     "业务外包的承包方（非外包时不用添加）"),
+    ("superior", "上级单位", "统一社会信用代码",
+     "上级主管单位（选填）"),
+    ("group", "集团单位", "统一社会信用代码",
+     "母公司 / 集团总部（选填）"),
+    ("bank", "工资代发银行", "联行号／账号",
+     "代发工资的开户银行或支行（选填）"),
+]
+UNIT_ROLE_KEYS = [k for k, _, _, _ in UNIT_ROLES]
+UNIT_ROLE_LABELS = {k: lab for k, lab, _, _ in UNIT_ROLES}
+UNIT_ROLE_CODE_LABELS = {k: c for k, _, c, _ in UNIT_ROLES}
+UNIT_ROLE_HINTS = {k: h for k, _, _, h in UNIT_ROLES}
+UNIT_ROLE_DEFAULT = "contract"
+# 工资代发银行：这一项的「编号」是联行号 / 账号，**不能**去企业信用查询站查，
+# 所以页面把它那行的行尾按钮做成「复制」（见 pages_units）。
+UNIT_ROLE_BANK = "bank"
+
+# 「其他相关单位」= 非内置类型的落点：
+# 用户的要求是「自定义内容填在**名称**栏」——
+# 所以它**可选择**（在类型下拉里），但添加菜单里用「✏️ 自定义（填在名称栏）…」这个动作代替。
+UNIT_ROLE_OTHER = "other"
+# 类型下拉用（= 11 个内置类型 + 其他相关单位）
+UNIT_SELECTABLE_KEYS = UNIT_ROLE_KEYS + [UNIT_ROLE_OTHER]
+UNIT_ROLE_LABELS[UNIT_ROLE_OTHER] = "其他相关单位"
+UNIT_ROLE_CODE_LABELS[UNIT_ROLE_OTHER] = "统一社会信用代码"
+UNIT_ROLE_HINTS[UNIT_ROLE_OTHER] = "其它单位：具体是什么写在「单位名称」栏，例如「补充医疗保险公司」"
+
+
+def resolve_unit_role(text: str) -> str:
+    """把类型文字解析成类型 key（不认识的一律归 :data:`UNIT_ROLE_OTHER`）。
+
+    供相关单位页的类型下拉（不可编辑）使用；纯函数，便于单测。
+    """
+    t = (text or "").strip()
+    for key, lab in UNIT_ROLE_LABELS.items():
+        if t == lab:
+            return key
+    return UNIT_ROLE_OTHER
+
+
+@dataclass
+class RelatedUnit:
+    """一家「相关单位」：类型 + 名称 + 可选编号。
+
+    * ``role``：类型 key（见 :data:`UNIT_ROLES`；不属于内置类型时用
+      :data:`UNIT_ROLE_OTHER`「其他相关单位」）；
+    * ``name``：单位名称。**自定义的具体内容也写在这里**（类型选「其他相关单位」，
+      名称写「补充医疗保险公司」）；
+    * ``code``：统一社会信用代码；工资代发银行一行填联行号 / 账号。
+    """
+
+    role: str = UNIT_ROLE_DEFAULT
+    name: str = ""
+    code: str = ""
+
+    def type_name(self) -> str:
+        """类型显示名（``other`` 即「其他相关单位」）。"""
+        return UNIT_ROLE_LABELS.get(self.role, "") or UNIT_ROLE_LABELS[UNIT_ROLE_OTHER]
+
+    def to_dict(self) -> dict:
+        return {"role": self.role, "name": self.name, "code": self.code}
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "RelatedUnit":
+        role = str(raw.get("role") or UNIT_ROLE_OTHER)
+        if role not in UNIT_ROLE_LABELS:
+            role = UNIT_ROLE_OTHER
+        return cls(role=role,
+                   name=str(raw.get("name") or "").strip(),
+                   code=str(raw.get("code") or "").strip())
+
+
+def default_units() -> list["RelatedUnit"]:
+    """默认单位表：**内置类型各一行**（名称 / 编号留空，等用户填）。
+
+    ⚠ **不含**「其他相关单位」—— 那是「列表里都没有」的落点，
+    需要时在「＋ 添加单位」里选「✏️ 自定义（填在名称栏）…」添加。
+    """
+    return [RelatedUnit(role=k) for k in UNIT_ROLE_KEYS]
+
+
 # ====== PayItem：一条工资项 ======
 
 def _safe_float(v, default: float = 0.0) -> float:
@@ -153,6 +257,7 @@ def days_in_month(year: int, month: int) -> int:
 
 # ====== MonthBook：月度账本 ======
 
+# days / pay_items 是对象列表，序列化单独处理（不走通用字段循环）
 _MONTHBOOK_SKIP = frozenset({"days", "pay_items"})
 _MONTHBOOK_FLOAT_FIELDS = None  # 首次计算缓存
 
@@ -220,6 +325,10 @@ class MonthBook:
     # —— 工资项（可增删，type 见 PAYITEM_TYPES）——
     pay_items: list[PayItem] = field(default_factory=list)
 
+    # ========= 相关单位不在这里 =========
+    # 相关单位（劳动合同签订 / 社保缴纳 / 工资发放 …… 涉及的公司）是**单位档案**，
+    # 与月份无关 → 全月共用一份，存在 settings.json 的 "units"（见 storage.MonthStore）。
+    # 月度存档**不保存也不读取**它（老存档里残留的 units 键会被直接忽略）。
     # ===== 便捷 =====
     @property
     def n_days(self) -> int:
@@ -234,6 +343,7 @@ class MonthBook:
 
     # ===== 序列化 =====
     def to_dict(self) -> dict:
+        """转成可 JSON 化的 dict（**不包含相关单位**：它是全局数据，见上文）。"""
         d = {
             "year": self.year, "month": self.month, "note": self.note,
             "days": [{"day": x.day, "status": x.status, "mark": x.mark,
@@ -280,6 +390,7 @@ class MonthBook:
             b.pay_items = [PayItem.from_dict(x) for x in items if isinstance(x, dict)]
         else:
             b.pay_items = []
+        # 2b) 相关单位不按月存（全局数据在 settings.json）→ 老存档里残留的 units 键直接忽略
         # 3) 天数：按 b.n_days 补全（如果 year/month 非法则 n_days=0，days 留空）
         n_days = b.n_days
         b.days = []

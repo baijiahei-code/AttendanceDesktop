@@ -1,4 +1,4 @@
-"""个人扣除卡片 —— 替代原 SalaryPageMixin._build_ded_card 内联方法。
+"""个人扣除卡片。
 
 结构：
 * 标题 + 提示
@@ -8,7 +8,13 @@
 * 个人所得税 spin
 * 扣除合计
 
-公开 attrs：spins, total, tax_auto
+公开 attrs：
+* :attr:`spins`：所有 NumberSpin 的字典（外部按 attr 读写 book）
+* :attr:`tax_auto`：自动个税勾选框（普通属性，不是 property）
+* :meth:`sync(r, book)`：根据 calc 结果刷新社保 / 公积金 / 扣除合计
+
+注：「个人扣除合计」QLabel 是内部私有属性（``_total``，**没有**公开的 total
+property），外部只调 ``sync()`` 刷新。
 """
 from __future__ import annotations
 

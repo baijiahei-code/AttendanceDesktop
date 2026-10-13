@@ -203,7 +203,6 @@ class MonthStore:
         return False
 
     # ========== 应用级设置（省份 / 偏好等）==========
-
     def _settings_path(self) -> str:
         return os.path.join(self.dir, "settings.json")
 
@@ -261,3 +260,29 @@ class MonthStore:
         except Exception:
             traceback.print_exc()
             return False
+
+    # ========== 全局相关单位（与月份无关）==========
+    #
+    # 相关单位（劳动合同签订 / 社保缴纳 / 工资发放 …… 涉及的公司）是**单位档案**，
+    # 与具体月份无关：全月共用一份，只存在 settings.json 的 "units" 里，
+    # **不读也不写月度存档**（老存档里残留的 units 键直接忽略）。
+
+    UNITS_KEY = "units"
+
+    def load_units(self) -> list[model.RelatedUnit]:
+        """读取全局相关单位（每次返回**新建的**对象，调用方可自由修改后自行 save_units）。
+
+        ⚠ 「设置里没有这个键」与「空列表」都返回 ``[]`` —— 想区分「从未设置过」和
+        「用户把单位删光了」请自己查 ``UNITS_KEY in load_settings()``
+        （页面首次列全部类型的种子逻辑就是这么判断的，见 ``pages_units._units_list``）。
+        """
+        raw = self.load_settings().get(self.UNITS_KEY)
+        if not isinstance(raw, list):
+            return []
+        return [model.RelatedUnit.from_dict(x) for x in raw if isinstance(x, dict)]
+
+    def save_units(self, units) -> bool:
+        """把全局相关单位写进 settings.json（其它设置原样保留）。"""
+        settings = self.load_settings()
+        settings[self.UNITS_KEY] = [u.to_dict() for u in units]
+        return self.save_settings(settings)

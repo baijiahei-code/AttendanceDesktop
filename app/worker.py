@@ -99,13 +99,20 @@ class AsyncCall(QObject):
             pass  # 目标控件已销毁（对话框被关闭 / 窗口正在退出）
 
     def _dispatch_done(self, result):
-        if not self._cancelled:
-            self._call(self._on_done, result)
+        # ⚠ `_finish()` 必须**无论如何**都执行：它负责把本对象从 _ACTIVE 里摘掉
+        # 并调 on_finished（各页面靠它把「查询中…」按钮恢复可用）。
+        # 被 cancel() 或 on_done 自身抛异常时都漏掉的话，按钮会永远停在禁用态。
+        try:
+            if not self._cancelled:
+                self._call(self._on_done, result)
+        finally:
             self._finish()
 
     def _dispatch_failed(self, msg):
-        if not self._cancelled:
-            self._call(self._on_failed, msg)
+        try:
+            if not self._cancelled:
+                self._call(self._on_failed, msg)
+        finally:
             self._finish()
 
     def _finish(self):

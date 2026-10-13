@@ -81,18 +81,25 @@ def describe(key_dir: str | None = None) -> dict:
     :return: 含下列键的 dict ——
         ``backend``         当前后端：``dpapi`` / ``gm`` / ``plain``
         ``dpapi_available`` 本平台是否支持 DPAPI
-        ``key_path``        SM2 私钥文件路径
-        ``key_ready``       私钥是否已就绪（已缓存或文件已存在）
-        ``algorithms``      算法描述文案（``plain`` 时为「无（plain）」）
+        ``key_path``        SM2 私钥文件路径（**只有 gm 后端会用到**）
+        ``key_ready``       私钥是否已就绪（缓存或文件已存在；非 gm 后端恒为 True）
+        ``algorithms``      实际生效的算法描述（按后端给出，不夸大）
     """
     path = key_path(key_dir)
     mode = backend()
+    if mode == "dpapi":
+        # Windows 走系统 DPAPI，**没有密钥文件、也不涉及国密** —— 不能报成 SM2/SM4
+        algos = "Windows DPAPI（由当前用户账户托管密钥，无密钥文件）"
+    elif mode == "gm":
+        algos = "SM2(C1C3C2) + SM4-CBC + HMAC-SM3"
+    else:
+        algos = "无（plain）"
     return {
         "backend": mode,
         "dpapi_available": dpapi_available(),
         "key_path": path,
-        "key_ready": path in _keypairs or os.path.exists(path),
-        "algorithms": "SM2(C1C3C2) + SM4-CBC + HMAC-SM3" if mode != "plain" else "无（plain）",
+        "key_ready": True if mode != "gm" else (path in _keypairs or os.path.exists(path)),
+        "algorithms": algos,
     }
 
 

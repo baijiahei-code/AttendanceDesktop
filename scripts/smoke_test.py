@@ -160,6 +160,91 @@ assert not b3.income_tax_auto  # 旧档缺字段 → 保持 dataclass 默认值�
 # 旧存档里可能残留已删除的 ot_auto 键：from_dict 必须忽略而不是报错
 b4 = model.MonthBook.from_dict({**raw, "ot_auto": True})
 assert not hasattr(b4, "ot_auto"), "ot_auto 字段应已移除"
+
+# 测试用的小助手：按类型取全部（同一类型可以有多家）
+def _role_units(units, role):
+    return [u for u in units if u.role == role]
+
+
+# ---- 相关单位：**全局数据（与月份无关）**，月度存档不存也不读它 ----
+assert not hasattr(b, "units"), "MonthBook 不应再有 units 字段"
+assert "units" not in b.to_dict(), "月度存档不该保存相关单位"
+_legacy_units = [model.RelatedUnit(role="contract", name="示例公司 A", code="91340000X"),
+                 model.RelatedUnit(role="contract", name="示例公司 B"),
+                 model.RelatedUnit(role="other", name="补充医疗保险公司")]
+# 旧存档里残留的 units 键**直接忽略**（没有自动迁移）
+b_legacy = model.MonthBook.from_dict(
+    {**raw, "units": [u.to_dict() for u in _legacy_units]})
+assert not hasattr(b_legacy, "units"), "旧档里的 units 不该被读进来"
+assert "units" not in b_legacy.to_dict()
+# 单位表查询辅助（模块函数，作用于任意 RelatedUnit 列表）
+assert [u.name for u in _role_units(_legacy_units, "contract")] == ["示例公司 A", "示例公司 B"]
+assert _role_units(_legacy_units, "other")[0].type_name() == "其他相关单位"
+assert _role_units(_legacy_units, "fund") == []
+# 未知 role 归入 other，不丢弃
+assert model.RelatedUnit.from_dict({"role": "nope", "name": "X"}).role == "other"
+# 类型解析：内置名 → key；不认识 / 空 → other
+assert model.resolve_unit_role("社保缴纳单位") == "social"
+assert model.resolve_unit_role("  公积金缴纳单位 ") == "fund"
+assert model.resolve_unit_role("其他相关单位") == "other"
+assert model.resolve_unit_role("补充医疗保险公司") == "other"
+assert model.resolve_unit_role("") == "other"
+
+# ---- 类型表：拆分「劳务派遣／外包」「上级／集团」，内置 11 类 ----
+assert model.UNIT_ROLE_OTHER not in model.UNIT_ROLE_KEYS, "内置列表不含「其他相关单位」"
+assert len(model.UNIT_ROLE_KEYS) == 11, model.UNIT_ROLE_KEYS
+for _k in ("dispatch", "outsourcing", "superior", "group"):
+    assert _k in model.UNIT_ROLE_KEYS, _k
+assert model.UNIT_ROLE_LABELS["dispatch"] == "劳务派遣单位"
+assert model.UNIT_ROLE_LABELS["outsourcing"] == "外包单位"
+assert model.UNIT_ROLE_LABELS["superior"] == "上级单位"
+assert model.UNIT_ROLE_LABELS["group"] == "集团单位"
+assert model.resolve_unit_role("外包单位") == "outsourcing"
+assert model.resolve_unit_role("集团单位") == "group"
+# 类型下拉 = 11 个内置类型 + 「其他相关单位」
+assert model.UNIT_SELECTABLE_KEYS == model.UNIT_ROLE_KEYS + [model.UNIT_ROLE_OTHER]
+assert model.RelatedUnit(role="other").type_name() == "其他相关单位"
+print("units OK")
+
+# ---- 全局相关单位：只存在 settings.json（无自动迁移）----
+import json  # noqa: E402
+import shutil  # noqa: E402
+
+from app.storage import MonthStore  # noqa: E402
+
+_tmp_gu = tempfile.mkdtemp()
+store_gu = MonthStore(_tmp_gu)
+assert store_gu.load_units() == [], "全新数据目录：没有单位"
+# 月度存档里即使有 units 键也**不会被读进来**（迁移功能已删）
+_old_path = os.path.join(_tmp_gu, "2026-05.json")
+with open(_old_path, "w", encoding="utf-8") as _f:
+    json.dump({**model.create_book(2026, 5).to_dict(),
+               "units": [u.to_dict() for u in _legacy_units]}, _f, ensure_ascii=False)
+assert store_gu.load_units() == [], "旧档里的单位不该被自动搬过来"
+assert "units" not in store_gu.load_settings()
+# 写入 / 读回（返回的对象可直接改）
+assert store_gu.save_units(_legacy_units) is True
+_sh_units = store_gu.load_units()
+assert [u.name for u in _sh_units] == ["示例公司 A", "示例公司 B", "补充医疗保险公司"]
+_sh_units[0].name = "改过名的公司"
+_sh_units.append(model.RelatedUnit(role="bank", name="某某银行"))
+assert store_gu.save_units(_sh_units) is True
+_re3 = store_gu.load_units()
+assert _re3[0].name == "改过名的公司" and _re3[-1].role == "bank"
+# 存单位不会顶掉其它设置（API 地址 / 省市 / Key 都在）
+store_gu.save_settings({**store_gu.load_settings(), "api_url": "https://example.invalid/v1"})
+assert store_gu.save_units(_re3) is True
+assert store_gu.load_settings()["api_url"] == "https://example.invalid/v1"
+assert len(store_gu.load_units()) == len(_re3)
+# 全部删光 → 设置里是空列表（下次启动也是空表）
+assert store_gu.save_units([]) is True
+assert store_gu.load_units() == []
+# 月度存档的保存不会掺进单位（再说一遍：它不按月存）
+store_gu.save(store_gu.load(2026, 5))
+with open(_old_path, "r", encoding="utf-8") as _f:
+    assert "units" not in json.load(_f), "月度存档不该保存单位"
+shutil.rmtree(_tmp_gu, ignore_errors=True)
+print("global units storage OK")
 print("serialize OK")
 
 # ---- UI 离屏渲染 ----
@@ -167,28 +252,97 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.main_window import MainWindow  # noqa: E402
 from app.storage import MonthStore  # noqa: E402
+from app.ui import (NAV_GROUPS, NO_MONTH_BAR_KEYS, PAGE_INDEX, PAGES)  # noqa: E402
+
+# 导航结构：「相关单位」必须是与「工作台」同级的独立页（第一位之后）
+assert len(PAGES) == 7, PAGES
+assert PAGE_INDEX["units"] == 1, PAGE_INDEX
+assert PAGE_INDEX["overview"] == 0, PAGE_INDEX
+# 侧栏分组：「相关单位」**不在「功 能」组里**，而是排在最前的独立入口（无分组标题）
+_nav_keys = [k for _t, keys in NAV_GROUPS for k in keys]
+assert len(_nav_keys) == len(set(_nav_keys)) == len(PAGES), _nav_keys
+assert sorted(_nav_keys) == sorted(k for k, _ in PAGES), _nav_keys
+assert _nav_keys[0] == "units", "「相关单位」应排在最前（功能分组之外）"
+assert NAV_GROUPS[0][0] == "", "第一组（相关单位）不该有分组标题"
+assert "units" not in [k for t, keys in NAV_GROUPS if t for k in keys]
+# 不挂月份操作条的页面表（目前只有相关单位）
+assert NO_MONTH_BAR_KEYS == frozenset({"units"})
+assert NO_MONTH_BAR_KEYS <= set(PAGE_INDEX)
 
 app = QApplication([])
+# Qt 内置文案必须靠 Qt 自带翻译文件汉化（右键菜单 / 对话框按钮），回归断言防漏
+from app.i18n import translation_dirs  # noqa: E402
+from app.i18n import install_qt_translations  # noqa: E402
+from PySide6.QtWidgets import QLineEdit  # noqa: E402
+
+assert install_qt_translations(app), f"未装到 Qt 中文翻译，查找目录：{translation_dirs()}"
+# ⚠ QLineEdit 必须留引用：右键菜单里的 action 归它（的文本控制器）所有，
+#    临时对象被回收后 action 的 C++ 对象随之失效（读 .text() 会 RuntimeError）。
+_ctx_edit = QLineEdit()
+_ctx_menu = _ctx_edit.createStandardContextMenu()
+_menu_texts = [a.text() for a in _ctx_menu.actions()]
+assert "复制(&C)\tCtrl+C" in _menu_texts, _menu_texts
+assert not any("Copy" in t or "Paste" in t for t in _menu_texts), _menu_texts
+print("i18n OK")
+
 win = MainWindow(MonthStore())
+
+# 侧栏渲染顺序：「相关单位」必须是第一个导航项，且排在「功 能」标题之前（= 不在功能分组内）
+from PySide6.QtWidgets import QLabel, QPushButton  # noqa: E402
+
+_side_lay = win.nav_btns[0].parentWidget().layout()
+_seq = []
+for _i in range(_side_lay.count()):
+    _w = _side_lay.itemAt(_i).widget()
+    if isinstance(_w, QLabel) and _w.objectName() == "sideSec":
+        _seq.append(("sec", _w.text()))
+    elif isinstance(_w, QPushButton) and _w.objectName() == "navBtn":
+        _seq.append(("nav", _w))
+_units_btn = win.nav_btns[PAGE_INDEX["units"]]
+_units_pos = next(i for i, (k, v) in enumerate(_seq) if k == "nav" and v is _units_btn)
+_func_pos = next(i for i, (k, v) in enumerate(_seq) if k == "sec" and v == "功 能")
+assert _units_pos == 0, f"「相关单位」应是第一个导航项：{_seq[:3]}"
+assert _units_pos < _func_pos, "「相关单位」不该在「功能」分组内"
+_func_navs = [_v for _k, _v in _seq[_func_pos:] if _k == "nav"]
+assert len(_func_navs) == len(PAGES) - 1, [b.text() for b in _func_navs]
+assert all(_b is not _units_btn for _b in _func_navs), "「功能」组里不该有相关单位"
+assert [b.text() for b in _func_navs] == [PAGES[i][1] for i, (k, _l) in enumerate(PAGES)
+                                             if k != "units"]
+# 每个页面恰好一个导航按钮，且按钮顺序与页面索引一致（_show_page 靠它反查选中项）
+assert all(b is not None for b in win.nav_btns), win.nav_btns
+for _i, _b in enumerate(win.nav_btns):
+    assert _b.text() == PAGES[_i][1], (_i, _b.text())
+print("sidebar layout OK")
+
 win.resize(1280, 860)
 win.show()
 win.store.save(b)  # 让年度汇总有真实数据
+# 相关单位是**全局**数据：先写进设置，再重建页面（切月不会变）
+win.store.save_units(_legacy_units)
+win._units_cache = None
+win._fill_units()
 win._go(2026, 2)   # 切到春节月
 win._book.income_tax_auto = True
 win._go(2026, 2)   # 重建页面：薪酬页应显示勾选态且手动框禁用
-win._show_page(2)  # 薪酬页（自动开关）
+win._show_page(PAGE_INDEX["salary"])  # 薪酬页（自动开关）
 for _ in range(8):
     app.processEvents()
 win.grab().save("_check_salary.png")
-win._show_page(5)  # 年度汇总
+win._show_page(PAGE_INDEX["annual"])  # 年度汇总
 for _ in range(8):
     app.processEvents()
 win.grab().save("_check_annual.png")
-win._show_page(1)  # 考勤页
+win._show_page(PAGE_INDEX["calendar"])  # 考勤页
 for _ in range(8):
     app.processEvents()
 win.grab().save("_check_calendar.png")
-win._show_page(0)
+win._show_page(PAGE_INDEX["units"])  # 相关单位页
+for _ in range(8):
+    app.processEvents()
+# 表格行数必须与全局单位表条数一致（3 条在上面已写进设置）
+assert len(win._unit_rows) == len(win._units_list()) == 3, (len(win._unit_rows), len(win._units_list()))
+win.grab().save("_check_units.png")
+win._show_page(PAGE_INDEX["overview"])
 for _ in range(8):
     app.processEvents()
 print("months on disk:", sorted(win.store.list_months()))
@@ -243,6 +397,390 @@ win2._change_timer.stop()
 win2.close()
 shutil.rmtree(_tmp, ignore_errors=True)
 print("delete-sync OK")
+
+# ---- 相关单位页：默认按**内置类型各列一行**（不含其他相关单位）→ 改完立即存进设置 ----
+from app import pages_params, pages_units  # noqa: E402
+
+_N_TYPES = len(model.UNIT_ROLE_KEYS)      # 内置 11 类
+_dflt = model.default_units()
+assert [u.role for u in _dflt] == model.UNIT_ROLE_KEYS, [u.role for u in _dflt]
+assert all(not u.name and not u.code for u in _dflt), "默认行应该都是空的，等用户填"
+assert model.UNIT_ROLE_OTHER not in [u.role for u in _dflt], "默认不列「其他相关单位」"
+
+_tmp_u = tempfile.mkdtemp()
+store_u = MonthStore(_tmp_u)
+store_u.save(model.create_book(2026, 8))
+win_u = MainWindow(store_u)
+win_u._go(2026, 8)
+assert [r.unit.role for r in win_u._unit_rows] == model.UNIT_ROLE_KEYS, \
+    [r.unit.role for r in win_u._unit_rows]
+assert len(win_u._units_list()) == len(win_u._unit_rows) == _N_TYPES
+# 只是「列出来等填」，还没落盘：设置里仍然没有 units 键
+assert store_u.UNITS_KEY not in store_u.load_settings()
+assert win_u._add_unit_btn.isEnabled()
+assert win_u._units_empty_hint.isHidden(), "默认有 11 行，不该显示空状态提示"
+
+# 「＋ 添加单位」= 先选类型再加一行（菜单本身由 _open_add_unit_menu 弹出，这里直调底层）
+win_u._add_unit_row("contract")          # 同一类型第二家（插在最后一个同类型行之后）
+win_u._add_unit_row("other")             # 「✏️ 自定义（填在名称栏）…」→ 追加到末尾
+assert [r.unit.role for r in win_u._unit_rows][:2] == ["contract", "contract"]
+assert win_u._unit_rows[-1].unit.role == "other"
+assert len(win_u._units_list()) == len(win_u._unit_rows) == _N_TYPES + 2
+# 全局单位：改动**立即**写 settings，且**不碰**月度存档
+_saved_units = store_u.load_settings()["units"]
+assert [u["role"] for u in _saved_units] == [r.unit.role for r in win_u._unit_rows]
+assert len(_saved_units) == _N_TYPES + 2
+assert "units" not in store_u.load(2026, 8).to_dict(), "月度存档不该保存单位"
+
+rows = win_u._unit_rows
+rows[0].name.setText("安徽某某科技有限公司")
+rows[0].code.setText("91340000MA2XXXXX1A")
+win_u._sync_unit_row(rows[0])
+rows[1].name.setText("安徽某某人力资源有限公司")
+win_u._sync_unit_row(rows[1])
+
+# 类型框是不可编辑下拉；列里就是 11 类 + 其他相关单位
+assert not rows[0].role.isEditable(), "类型框不应该能手打（自定义填名称栏）"
+_items = [rows[0].role.itemText(i) for i in range(rows[0].role.count())]
+assert _items == [model.UNIT_ROLE_LABELS[k] for k in model.UNIT_SELECTABLE_KEYS], _items
+assert _items[-1] == "其他相关单位"
+# 自定义内容写在名称栏：类型=其他相关单位，名称=具体单位
+_custom_row = win_u._unit_rows[-1]
+assert _custom_row.role.currentText() == "其他相关单位"
+_custom_row.name.setText("补充医疗保险公司")
+win_u._sync_unit_row(_custom_row)
+assert _custom_row.unit.role == "other"
+assert _custom_row.unit.name == "补充医疗保险公司"
+# 切类型：改回内置类型（名称保留）
+_custom_row.role.setCurrentIndex(_custom_row.role.findText("实际用工单位"))
+win_u._on_unit_type_changed(_custom_row)
+assert _custom_row.unit.role == "work"
+assert _custom_row.unit.name == "补充医疗保险公司"    # 改类型不动名称
+
+# 读盘校验：新开的仓库能拿到同一份全局单位（含还没填名称的那些空行）
+reloaded_u = store_u.load_units()
+assert [u.name for u in _role_units(reloaded_u, "contract")] == [
+    "安徽某某科技有限公司", "安徽某某人力资源有限公司"]
+assert _role_units(reloaded_u, "contract")[0].code == "91340000MA2XXXXX1A"
+assert len(reloaded_u) == _N_TYPES + 2, reloaded_u
+
+# 「与月份无关」：切月单位表不变（不像工资/考勤那样按月分开）
+_before_names = [r.unit.name for r in win_u._unit_rows]
+win_u._go(2026, 7)
+assert [r.unit.name for r in win_u._unit_rows] == _before_names, \
+    [r.unit.name for r in win_u._unit_rows]
+# 月度存档里根本没有单位这个键（切月也不写新档案）
+with open(os.path.join(_tmp_u, "2026-08.json"), "r", encoding="utf-8") as _f:
+    assert "units" not in json.load(_f)
+assert not os.path.exists(os.path.join(_tmp_u, "2026-07.json")), "切月不该凭空写档案"
+win_u._go(2026, 8)
+
+# 「一键同劳动合同签订单位」已删除 → 每家的名称只能手动填（用户 2026-10-13 要求）
+assert not hasattr(win_u, "_sync_units_from_contract"), "一键同步功能应已删除"
+assert not hasattr(win_u, "_SYNC_UNIT_ROLES")
+assert not [b for b in win_u._units_card.findChildren(QPushButton) if "一键同" in b.text()], \
+    "卡片里不该再有「一键同…」按钮"
+# 空行保持为空（不会因为别的行填了就自动被填）
+_filled_rows = [r for r in win_u._unit_rows if r.unit.name]
+_blank_rows = [r for r in win_u._unit_rows if not r.unit.name]
+assert len(_filled_rows) == 3, [r.unit.name for r in _filled_rows]   # 两家签订 + 一家自定义
+assert len(_blank_rows) + len(_filled_rows) == len(win_u._unit_rows)
+assert len(_blank_rows) == _N_TYPES - 1, [r.unit.role for r in _blank_rows]
+assert not any(u.name for u in win_u._units_list() if u.role in ("fund", "wage", "tax")), \
+    "没填过的类型不会自己出现名称"
+
+# 删除一行：两边同步减少（删掉的行**不会**自己回来）
+win_u._remove_unit_row(win_u._unit_rows[1])
+assert len(win_u._units_list()) == len(win_u._unit_rows) == _N_TYPES + 1
+assert len(store_u.load_units()) == _N_TYPES + 1, "删除要落盘"
+_reopened = store_u.load_units()
+assert len(_reopened) == _N_TYPES + 1, "重新读取不该把删掉的行补回来"
+
+# 再加一行自定义：类型=其他相关单位，具体单位写在名称栏
+win_u._add_unit_row("other")
+cust = win_u._unit_rows[-1]
+assert cust.unit.role == "other" and cust.role.currentText() == "其他相关单位"
+cust.name.setText("补充医疗保险公司")
+win_u._sync_unit_row(cust)
+assert _role_units(win_u._units_list(), "other")[0].name == "补充医疗保险公司"
+
+# ---- 相关单位**不参与参数模板**（用户 2026-10-13：它和套用模板也无关）----
+pages_params.QInputDialog.getText = staticmethod(lambda *a, **kw: ("单位模板", True))
+win_u._save_template()
+_tpl = next(t for t in win_u._load_templates() if t["name"] == "单位模板")
+assert "units" not in _tpl["params"], "模板不该再带相关单位"
+assert not hasattr(win_u, "_apply_units_from_template"), "该方法应已删除"
+_units_before = [r.unit.name for r in win_u._unit_rows]
+win_u._refresh_templates()
+win_u.tpl_combo.setCurrentText("单位模板")
+win_u._apply_template()
+assert [r.unit.name for r in win_u._unit_rows] == _units_before, "套模板不该动单位表"
+assert len(win_u._unit_rows) == len(win_u._units_list()), "表格与单位表要一一对应"
+# 旧版本存的模板里可能带 units 键 → 套用时直接忽略（不报错、也不改单位）
+_tpls = win_u._load_templates()
+_tpls[0]["params"]["units"] = [{"role": "contract", "name": "旧模板里的公司"}]
+assert win_u._save_templates(_tpls) is True
+win_u._refresh_templates()
+win_u.tpl_combo.setCurrentText(_tpls[0]["name"])
+win_u._apply_template()
+assert [r.unit.name for r in win_u._unit_rows] == _units_before, "旧模板里的 units 键要被忽略"
+
+# ---- 顶部「月份锁定」与本页**无关**（数据不在月份里）→ 本页仍可编辑 ----
+win_u._book.locked = True
+win_u._apply_lock_state(True)
+assert win_u._is_locked is True
+assert win_u._add_unit_btn.isEnabled(), "相关单位不受月份锁定影响"
+for _r in win_u._unit_rows:
+    assert _r.role.isEnabled() and _r.name.isEnabled() and _r.code.isEnabled()
+    assert _r.del_btn.isEnabled() and _r.action_btn.isEnabled()
+assert win_u._units_lock_banner.isHidden(), "本页不因月份锁定而挂只读横幅"
+# 锁定的月份里改单位：能改、能存，而且**只写 settings、不碰月度存档**
+_lk_row = next(r for r in win_u._unit_rows if r.unit.role == "contract")
+_month_before = store_u.load(2026, 8).to_dict()
+_lk_row.name.setText("锁定月改的公司")
+win_u._sync_unit_row(_lk_row)
+assert store_u.load_settings()["units"][0]["name"] == "锁定月改的公司"
+assert store_u.load(2026, 8).to_dict() == _month_before, "改单位不该动月度存档"
+_lk_row.name.setText("安徽某某科技有限公司")
+win_u._sync_unit_row(_lk_row)
+win_u._book.locked = False
+win_u._apply_lock_state(False)
+assert win_u._add_unit_btn.isEnabled()
+
+# ---- 单位登记表**自己的锁**：锁定后不可改 / 不可增删，但 🔍 仍可搜索 ----
+win_u._units_lock_btn.click()
+assert win_u._units_is_locked() is True
+for _r in win_u._unit_rows:
+    assert not _r.role.isEnabled() and not _r.name.isEnabled()
+    assert not _r.code.isEnabled() and not _r.del_btn.isEnabled()
+    assert _r.action_btn.isEnabled(), "「锁定后仍然可以搜索」—— 搜索按钮必须可用"
+assert not win_u._add_unit_btn.isEnabled(), "锁定后不应能添加单位"
+assert win_u._units_lock_btn.isEnabled(), "锁上之后还得能解开"
+assert not win_u._units_lock_banner.isHidden(), "锁定时应显示本页只读横幅"
+assert win_u._units_lock_banner.text() == pages_units.UNITS_LOCK_BANNER_TEXT
+_n_edit = len(win_u._units_list())
+win_u._add_unit_row("contract")           # 锁定态下连“程序化添加”也要被拦
+assert len(win_u._units_list()) == _n_edit, "锁定后不应新增行"
+# 锁定态下改输入框 → API 层拦下，不写单位表
+_name_keep = win_u._unit_rows[0].unit.name
+win_u._unit_rows[0].name.setText("不该生效")
+win_u._sync_unit_row(win_u._unit_rows[0])
+assert win_u._unit_rows[0].unit.name == _name_keep
+assert store_u.load_settings()["units"][0]["name"] == _name_keep
+win_u._unit_rows[0].name.setText(_name_keep)
+# 解锁恢复
+win_u._units_lock_btn.click()
+assert win_u._units_is_locked() is False
+assert win_u._units_lock_banner.isHidden()
+assert win_u._add_unit_btn.isEnabled() and win_u._unit_rows[0].name.isEnabled()
+# 月份锁定 + 本页锁同时存在：解开本页的锁后照常可改（月份锁不管本页）
+win_u._units_lock_btn.click()
+win_u._book.locked = True
+win_u._apply_lock_state(True)
+assert not win_u._add_unit_btn.isEnabled()
+win_u._units_lock_btn.click()       # 解开本页的锁
+assert win_u._add_unit_btn.isEnabled(), "月份锁不该拦住本页（数据不在月份里）"
+win_u._book.locked = False
+win_u._apply_lock_state(False)
+
+# 空行照常保留（不做任何「兼容清理」）：新增一行不填内容 → 也在设置里
+win_u._add_unit_row("bank")
+_n_blank = len(win_u._units_list())
+_saved_blank = store_u.load_settings()["units"]
+assert len(_saved_blank) == _n_blank, (_saved_blank, _n_blank)
+assert any(u["role"] == "bank" and not u["name"] for u in _saved_blank), "空行也应原样落盘"
+
+# ---- 「＋ 添加单位」的类型菜单（假 QMenu：真的 QMenu.exec 会阻塞） ----
+class _FakeAct:
+    def __init__(self, text):
+        self.text, self._d = text, None
+        self.checkable = False
+        self.checked = False
+
+    def setData(self, d):
+        self._d = d
+
+    def setToolTip(self, _t):
+        pass
+
+    def setCheckable(self, on):
+        self.checkable = bool(on)
+
+    def setChecked(self, on):
+        self.checked = bool(on)
+
+    def data(self):
+        return self._d
+
+
+class _FakeMenu:
+    pick = 0
+    items: list = []
+    sections: list = []
+    last_acts: list = []
+
+    def __init__(self, *a, **kw):
+        self.acts = []
+
+    def addAction(self, text):
+        a = _FakeAct(text)
+        self.acts.append(a)
+        return a
+
+    def addSection(self, text):
+        _FakeMenu.sections = _FakeMenu.sections + [str(text)]
+
+    def addSeparator(self):
+        pass
+
+    def exec(self, *a, **kw):
+        _FakeMenu.items = [x.text for x in self.acts]
+        _FakeMenu.last_acts = list(self.acts)
+        return self.acts[self.pick]
+
+
+_orig_menu = pages_units.QMenu
+pages_units.QMenu = _FakeMenu
+try:
+    _FakeMenu.pick = 0
+    _roles_before = [r.unit.role for r in win_u._unit_rows]
+    win_u._add_unit_btn.click()
+    assert _FakeMenu.items[:-1] == [model.UNIT_ROLE_LABELS[k] for k in model.UNIT_ROLE_KEYS]
+    assert _FakeMenu.items[-1] == "✏️ 自定义（填在名称栏）…"
+    _roles_after = [r.unit.role for r in win_u._unit_rows]
+    assert len(_roles_after) == len(_roles_before) + 1
+    assert _roles_after.count("contract") == _roles_before.count("contract") + 1
+    # 选「✏️ 自定义（填在名称栏）…」→ 加一行「其他相关单位」，具体单位写名称栏
+    _FakeMenu.pick = len(_FakeMenu.items) - 1
+    win_u._add_unit_btn.click()
+    _c2 = win_u._unit_rows[-1]
+    assert _c2.unit.role == "other" and _c2.role.currentText() == "其他相关单位"
+    assert not _c2.role.isEditable(), "类型列不可手打（自定义填名称栏）"
+    _c2.name.setText("补充医疗保险公司")
+    win_u._sync_unit_row(_c2)
+    assert _c2.unit.name == "补充医疗保险公司"
+
+    # ---- 「🔍 去搜索」：**优先统一社会信用代码**（没填则用名称）；两站可切换 ----
+    _opened: list[str] = []
+    _orig_open = pages_units.QDesktopServices.openUrl
+    pages_units.QDesktopServices.openUrl = staticmethod(
+        lambda u: _opened.append(u.toString()))
+    try:
+        _srow = win_u._unit_rows[0]           # 名称 + 统一社会信用代码 都有
+        assert _srow.unit.name == "安徽某某科技有限公司", _srow.unit
+        assert _srow.unit.code == "91340000MA2XXXXX1A", _srow.unit
+        _FakeMenu.sections = []
+        _FakeMenu.pick = 0                     # 国家企业信用信息公示系统
+        _srow.action_btn.click()
+        assert _FakeMenu.sections[-1] == "去搜索：91340000MA2XXXXX1A", _FakeMenu.sections
+        assert _FakeMenu.items == ["国家企业信用信息公示系统", "信用中国"], _FakeMenu.items
+        assert QApplication.clipboard().text() == "91340000MA2XXXXX1A", "应优先复制统一社会信用代码"
+        assert _opened[-1].startswith("https://www.gsxt.gov.cn/"), _opened
+        assert win_u._unit_search_last == "gsxt"
+        # 状态栏要明说「已复制到剪贴板：<关键词>」，而且后台的「已保存」不能把它顶掉
+        assert win_u.status_label.text().startswith("已复制到剪贴板："), \
+            win_u.status_label.text()
+        assert "91340000MA2XXXXX1A" in win_u.status_label.text()
+        assert "Ctrl" not in win_u.status_label.text(), "提示里不该写按键"
+        win_u._set_status("已保存 00:00:00", True, background=True)
+        assert win_u.status_label.text().startswith("已复制到剪贴板："), \
+            "剪贴板提示被后台提示顶掉了"
+        # 第一次打开时还没有「上次用过」的站点 → 两个都不打勾
+        assert [a.checked for a in _FakeMenu.last_acts] == [False, False]
+        # 再点一次 → 切到另一个站点；打开菜单时应给「当前站点」打勾
+        _FakeMenu.pick = 1                     # 信用中国
+        _srow.action_btn.click()
+        assert _opened[-1].startswith("https://www.creditchina.gov.cn/"), _opened
+        assert win_u._unit_search_last == "credit"
+        assert [a.checked for a in _FakeMenu.last_acts] == [True, False], \
+            [a.checked for a in _FakeMenu.last_acts]
+        # 只填了名称、没填编号 → 用名称
+        _nameonly = next(r for r in win_u._unit_rows if r.unit.name and not r.unit.code)
+        _nameonly.action_btn.click()
+        assert QApplication.clipboard().text() == _nameonly.unit.name, _nameonly.unit
+        assert _FakeMenu.sections[-1] == f"去搜索：{_nameonly.unit.name}", _FakeMenu.sections
+        # 名称和编号都空 → 不开浏览器，只提示
+        _blank = win_u._unit_rows[-1]
+        _blank.name.setText("")
+        _blank.code.setText("")
+        win_u._sync_unit_row(_blank)           # 让单位表里也变空（搜索读的是 unit）
+        _n_before = len(_opened)
+        _blank.action_btn.click()
+        assert len(_opened) == _n_before, "没填名称/编号时不应打开站点"
+
+        # ---- 工资代发银行行：行尾是「📋 复制」，**一次复制两个值**（名称 + 联行号）----
+        _bank = next(r for r in win_u._unit_rows if r.unit.role == "bank")
+        assert _bank.action_btn.text() == "📋", _bank.action_btn.text()
+        assert "复制" in _bank.action_btn.toolTip()
+        _bank.name.setText("某某银行安庆分行")
+        _bank.code.setText("105361000012")
+        win_u._sync_unit_row(_bank)
+        _n_before = len(_opened)
+        _bank.action_btn.click()
+        assert QApplication.clipboard().text() == "某某银行安庆分行\n105361000012", \
+            repr(QApplication.clipboard().text())
+        assert len(_opened) == _n_before, "银行行不该打开查询站点"
+        assert win_u.status_label.text() == "已复制到剪贴板：某某银行安庆分行 / 105361000012", \
+            win_u.status_label.text()
+        # 只填了联行号 → 只复制那一个
+        _bank.name.setText("")
+        win_u._sync_unit_row(_bank)
+        _bank.action_btn.click()
+        assert QApplication.clipboard().text() == "105361000012"
+        # 只填了银行名称 → 只复制名称
+        _bank.name.setText("某某银行安庆分行")
+        _bank.code.setText("")
+        win_u._sync_unit_row(_bank)
+        _bank.action_btn.click()
+        assert QApplication.clipboard().text() == "某某银行安庆分行"
+        # 名称 / 编号都空 → 只提示，不动剪贴板
+        _bank.name.setText("")
+        win_u._sync_unit_row(_bank)
+        QApplication.clipboard().setText("占位")
+        _bank.action_btn.click()
+        assert QApplication.clipboard().text() == "占位", "没填内容时不该改剪贴板"
+        assert "请先填写" in win_u.status_label.text(), win_u.status_label.text()
+        # 改类型 → 按钮的图标 / 行为跟着变（改出银行 / 改回普通单位）
+        _bank.role.setCurrentIndex(_bank.role.findText("外包单位"))
+        win_u._on_unit_type_changed(_bank)
+        assert _bank.action_btn.text() == "🔍", "改出银行后应变回搜索"
+        _bank.role.setCurrentIndex(_bank.role.findText("工资代发银行"))
+        win_u._on_unit_type_changed(_bank)
+        assert _bank.action_btn.text() == "📋", "改成银行后应变回复制"
+        _bank.name.setText("某某银行安庆分行")
+        _bank.code.setText("105361000012")
+        win_u._sync_unit_row(_bank)
+    finally:
+        pages_units.QDesktopServices.openUrl = _orig_open
+finally:
+    pages_units.QMenu = _orig_menu
+# 「相关单位」页**没有**月份操作条：不是 setVisible 藏起来，而是从主栏布局里摘掉
+win_u._show_page(PAGE_INDEX["units"])
+for _ in range(4):
+    app.processEvents()
+assert win_u._main_lay.indexOf(win_u._month_bar) == -1, "相关单位页不该挂月份操作条"
+assert win_u._month_bar.isHidden()
+# 在相关单位页切月（会重建全部页面）也不能让它冒出来
+win_u._go(2026, 7)
+for _ in range(4):
+    app.processEvents()
+assert win_u._main_lay.indexOf(win_u._month_bar) == -1, "切月后它也不该出现"
+# 换到其它页：装回原位（页题栏与页面栈之间）
+win_u._show_page(PAGE_INDEX["calendar"])
+for _ in range(4):
+    app.processEvents()
+_bar_idx = win_u._main_lay.indexOf(win_u._month_bar)
+assert _bar_idx > 0, "其它页要有月份操作条"
+assert _bar_idx < win_u._main_lay.indexOf(win_u.stack), "月份条应在页面栈之前"
+assert not win_u._month_bar.isHidden()
+win_u._go(2026, 8)
+win_u._show_page(PAGE_INDEX["units"])
+for _ in range(4):
+    app.processEvents()
+win_u._change_timer.stop()
+win_u.close()
+shutil.rmtree(_tmp_u, ignore_errors=True)
+print("units page OK")
 
 # ---- 锁定月份保护：复制 / 套用模板 / 删除 / 清空考勤 全部拒绝 ----
 _tmp2 = tempfile.mkdtemp()
@@ -360,6 +898,8 @@ b_locked2.pay_items = [
     model.PayItem(name="岗位工资", type="wage", amount=1500),
 ]
 b_locked2.big_disease = 50.0
+store3.save_units([model.RelatedUnit(role="contract", name="锁定月也有单位",
+                                     code="91340000LOCKED")])
 b_locked2.locked = True
 store3.save(b_locked2)
 
@@ -443,6 +983,8 @@ locked_widgets += [w for w in win4._params_extra_modify_widgets if w is not None
 # 5 张 Card 内部所有可交互控件（Card 框架统一管理）
 for card in getattr(win4, "_params_cards", []):
     locked_widgets += card.iter_tracked_widgets()
+# 相关单位卡：**不列入通用断言** —— 它内部有「🔍 去搜索」与锁按钮两个
+# 只读动作在锁定时仍须可用，所以单独在下面 6c) 里逐控件断言。
 locked_widgets += [w for w in win4._param_spins.values()]
 locked_widgets += [win4._fill_agreed_btn, win4._api_settings_btn,
                    win4._fetch_wage_btn, win4._fetch_wage_api_btn, win4._wage_lock_btn,
@@ -469,6 +1011,23 @@ for btn in win4._day_btns.values():
     assert not btn.isEnabled(), "锁定月日期格子未禁用"
 print("locked UI controls disabled OK")
 
+# 6b) 各页「已锁定」横幅要各自生效（三页曾共用 self._lock_banner → 只有最后构建的那页能显示）
+assert win4._params_lock_banner is not win4._calendar_lock_banner
+assert win4._calendar_lock_banner is not win4._salary_lock_banner
+for _bn in (win4._params_lock_banner, win4._calendar_lock_banner,
+            win4._salary_lock_banner):
+    assert not _bn.isHidden(), "锁定月各页只读横幅都应显示"
+
+# 6c) 相关单位与月份无关 → 整月锁定时本页**照常可编辑**（只由它自己的锁控制）
+assert win4._add_unit_btn.isEnabled(), "相关单位不受月份锁定影响"
+assert win4._unit_rows, "单位表里应有单位（见 store3.save_units 夹具）"
+for _r in win4._unit_rows:
+    assert _r.role.isEnabled() and _r.name.isEnabled() and _r.code.isEnabled()
+    assert _r.del_btn.isEnabled() and _r.action_btn.isEnabled()
+assert win4._units_lock_btn.isEnabled()
+assert win4._units_lock_banner.isHidden(), "月份锁定不给相关单位挂只读横幅"
+assert win4._units_lock_btn.text().startswith("🔓"), "单位表自己那把锁默认应是未锁"
+
 # 7) 锁定月仍可导出 Excel（pages_report 的导出按钮应可点，且 _write_report_xlsx 不抛异常）
 # 切到报表页并直接调用底层写入逻辑（QFileDialog 是 C++ 绑定，无法 monkey-patch）
 import os.path as _op
@@ -477,7 +1036,7 @@ from app import pages_report as _rep  # noqa: E402
 _xlsx_fd, out_xlsx = _tf.mkstemp(suffix=".xlsx")
 os.close(_xlsx_fd)
 os.unlink(out_xlsx)
-win4._show_page(4)  # 报表页
+win4._show_page(PAGE_INDEX["report"])  # 报表页
 for _ in range(4):
     app.processEvents()
 _rep._write_report_xlsx(out_xlsx, win4._last_result, win4._book)
@@ -882,10 +1441,14 @@ _call = _worker.run_async(lambda: 1, on_done=lambda r: _seen.append("done"),
 _call.cancel()
 import time as _time  # noqa: E402
 _deadline = _time.monotonic() + 3
-while _time.monotonic() < _deadline:
+while _time.monotonic() < _deadline and not _seen:
     _app2.processEvents()
     _time.sleep(0.01)
-assert _seen == [], f"取消后不应执行任何回调：{_seen}"
+# 契约（2026-10-07 修正）：cancel() 只拦「结果类」回调（done / failed），
+# on_finished **必须照常执行** —— 各页面靠它把「查询中…」按钮恢复可用，
+# 旧实现把 _finish() 一起跳过 → 按钮永远卡在禁用态、_ACTIVE 还会泄漏。
+assert _seen == ["finished"], f"取消后只应执行 finished：{_seen}"
+assert _call not in _worker._ACTIVE, "取消后必须从 _ACTIVE 里摘掉（否则泄漏）"
 
 _seen.clear()
 _worker.run_async(lambda: 1, on_done=lambda r: _seen.append("done"),
@@ -955,3 +1518,99 @@ _srv3 = _si.InstanceServer(lambda: None)
 assert _srv3.start() is True, "实例退出后应能重新监听"
 _srv3.close()
 print("single instance OK")
+
+
+# =====================================================================
+# 全代码审计（2026-10-07）：本轮修掉的问题的回归断言
+# 说明：每条前面都写清「修复前会怎样」，以后有人改回去会立刻红。
+# =====================================================================
+
+# ---- ① calc：hours_per_day = 0 不得把整个核算除崩 ----
+# 修复前：company_hourly_cost 的分母是 (天 × 每日工时)，只判了「天 > 0」，
+#   用户在参数页把「24 小时内工时」填成 0 就直接 ZeroDivisionError。
+_b0 = model.create_book(2026, 3)
+for _d in _b0.days:
+    _d.status = "上班"
+_b0.pay_items.append(model.PayItem(name="基本工资", type="wage", amount=8000))
+_b0.hours_per_day = 0.0
+_r0 = calc.compute(_b0)                      # 修复前这行抛 ZeroDivisionError
+assert _r0.company_hourly_cost == 0.0, _r0.company_hourly_cost
+_b0.hours_per_day = 8.0
+assert calc.compute(_b0).company_hourly_cost > 0
+print("calc zero hours-per-day OK")
+
+# ---- ② params 页数字输入框：不允许负数（工时/基数/比例填负数没有意义）----
+_w = MainWindow(MonthStore())
+_hp = _w._param_spins["hours_per_day"]
+assert _hp.minimum() == 0.0, f"参数页输入框下限应为 0：{_hp.minimum()}"
+_hp.setValue(-5)
+assert _hp.value() == 0.0, f"负值应被夹到 0：{_hp.value()}"
+print("param spin non-negative OK")
+
+# ---- ③ wages.get：指定地区查不到时必须返回 None ----
+# 修复前：非空 region 查不到会静默返回「该省第一个城市」的数字 ——
+#   相当于把另一个地方的最低工资写进账本（还联动加班基数/公积金基数）。
+from app import wages as _wg  # noqa: E402
+assert _wg.get("广东", "这个市不存在") is None, "未知城市必须返回 None"
+assert _wg.get("广东") is not None, "不指定城市时仍取该省第一个"
+assert _wg.get("这个省不存在") is None
+print("wages unknown-region OK")
+
+# ---- ④ holidays：内置表与 API 两条链路共用同一套日型判定 ----
+assert holidays.classify_day("01-01", statutory={"01-01"}, rest={"01-01", "01-02"},
+                             makeup={"01-01"}) == "statutory"
+assert holidays.classify_day("01-02", statutory={"01-01"}, rest={"01-01", "01-02"},
+                             makeup={"01-01"}) == "rest"
+assert holidays.classify_day("01-03", statutory={"01-01"}, rest={"01-01"},
+                             makeup={"01-01"}) is None
+assert holidays.day_kind(2026, 2, 17) == "statutory", "春节初一应为法定日"
+assert holidays.day_kind(2026, 2, 14) == "makeup", "2/14 应为补班日"
+_ys = holidays.year_sets(2026)
+assert _ys and _ys["statutory"] and _ys["rest"] and _ys["makeup"], _ys
+assert not hasattr(holidays, "_year_sets"), "私有名已提升为 year_sets，不要再冒出一个"
+print("holiday classify OK")
+
+# ---- ⑤ crypto.describe：算法描述必须与真实后端一致 ----
+# 修复前：只要后端不是 plain 就报「SM2(C1C3C2) + SM4-CBC + HMAC-SM3」，
+#   Windows 上实际走的是 DPAPI → 「关于」对话框报了假的国密用法。
+_cd = _crypto.describe(None)
+if _cd["backend"] == "gm":
+    assert "SM2" in _cd["algorithms"], _cd
+    assert _cd["key_ready"] in (True, False)
+elif _cd["backend"] == "dpapi":
+    assert "SM2" not in _cd["algorithms"], _cd
+    assert "DPAPI" in _cd["algorithms"], _cd
+    assert _cd["key_ready"] is True, "DPAPI 不需要密钥文件，key_ready 应为 True"
+else:
+    assert _cd["algorithms"] == "无（plain）", _cd
+print("crypto describe truthful OK")
+
+# ---- ⑥ 工资项列宽：数据行与表头必须同一个「标准」列宽 ----
+# 修复前：setFixedWidth(widths["std"]) 紧跟着 setMinimumWidth(110)/setMaximumWidth(180)
+#   → fixed 被覆盖，行与表头列宽可能对不齐。
+from app import config as _cfg  # noqa: E402
+from app.widgets import PayItemRow as _PIRow  # noqa: E402
+_row = _PIRow(model.PayItem(name="审计用", type="wage", amount=1.0))
+_std = _cfg.PAYITEM_COL_WIDTHS["std"]
+assert _row._amount.minimumWidth() == _std == _row._amount.maximumWidth(), (
+    _row._amount.minimumWidth(), _row._amount.maximumWidth(), _std)
+_row.deleteLater()
+print("pay item column width OK")
+
+# ---- ⑦ 添加工资项菜单：build() 反复调用不得堆积子菜单 ----
+# 修复前：每次弹菜单都新建 4 个子菜单（parent 是自己），clear() 又清不掉它们 → 泄漏。
+_menu = _w.pay_items._catalog_menu
+_menu.build()
+_n1 = len(_menu._subs)
+assert _n1 >= 1, "菜单至少应有 4 个类型子菜单"
+_menu.build()
+assert len(_menu._subs) == _n1, f"重复 build 后子菜单变多了：{_n1} → {len(_menu._subs)}"
+print("pay item menu rebuild OK")
+
+# ---- ⑧ ensure_visible_row：父链不是滚动区时不得静默失效 ----
+# 修复前：写死 parent().parent()，而真实层级是 pay_items → ResponsiveColumns → 滚动区，
+#   于是这个函数永远找不到滚动区、静默什么都不做。
+_lst = _w.pay_items
+if _lst.rows:
+    _lst.ensure_visible_row(_lst.rows[0])   # 不抛异常即可（真实窗口里会滚过去）
+print("ensure visible row OK")

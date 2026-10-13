@@ -29,17 +29,35 @@ def default_export_path(filename: str) -> str:
     return os.path.normpath(os.path.join(base, filename))
 
 
-# 左侧导航六区（顺序即页面索引）
+# 左侧导航七区（顺序即页面索引）
 PAGES = [
     ("overview", "🏠  工作台"),
+    ("units", "🏢  相关单位"),
     ("calendar", "📅  考勤"),
     ("salary", "💰  薪酬构成"),
     ("params", "⚙️  参数"),
     ("report", "📊  报表"),
     ("annual", "📆  年度汇总"),
 ]
+# 页面 key → 索引。**不要在各处写死数字** —— 页面顺序一变就全错。
+PAGE_INDEX = {key: i for i, (key, _) in enumerate(PAGES)}
+
+# 左侧导航的**分组**：只决定显示顺序与分组标题，页面索引仍由 PAGES 决定。
+# 第一组没有标题 —— 「相关单位」是单位档案性质的独立入口（不随月份走），
+# 刻意放在「功 能」分组**之外**（用户 2026-10-13 要求）。
+# ⚠ 每个 key 必须**恰好出现一次**（smoke_test 里有断言，新页面别漏加）。
+NAV_GROUPS = (
+    ("", ("units",)),
+    ("功 能", ("overview", "calendar", "salary", "params", "report", "annual")),
+)
+
+# **没有「月份操作条」的页面**（上月 / 月份 / 锁定 / 下月 / 删除本月）。
+# 「相关单位」与月份无关（单位表全月共用一份）→ 该页直接从主栏布局里摘掉月份条。
+# 与 PAGES / NAV_GROUPS 放在一起，页面归属变化只改这一行。
+NO_MONTH_BAR_KEYS = frozenset({"units"})
 PAGE_TITLES = {
     "overview": ("工作台", "本月关键数据 · 合规判定"),
+    "units": ("相关单位", "劳动合同 / 社保 / 公积金 / 工资发放 / 个税等涉及的多家公司"),
     "calendar": ("考勤", "逐日标记状态，点选后右侧编辑加班 / 请假"),
     "salary": ("薪酬构成", "工资项可增删；补贴只需一条，按出勤自动折算"),
     "params": ("参数", "社保公积金基数 / 比例与各项标准，可存为模板"),
@@ -173,9 +191,12 @@ class ResponsiveColumns(QWidget):
                                else QBoxLayout.Direction.LeftToRight)
 
 
-def make_lock_banner(parent=None) -> QLabel:
-    """锁定月的只读提示横幅（考勤 / 薪酬 / 参数三页共用，默认隐藏）。"""
-    lab = QLabel(LOCK_BANNER_TEXT, parent)
+def make_lock_banner(text: str | None = None, parent=None) -> QLabel:
+    """只读提示横幅（默认文案是「整月锁定」，可传自定义文案），默认隐藏。
+
+    「相关单位」页会按只读原因切换文案（整月锁定 / 它自己的锁，见 pages_units）。
+    """
+    lab = QLabel(text or LOCK_BANNER_TEXT, parent)
     lab.setStyleSheet(
         "background:#FEF4E6;color:#B54708;border:1px solid #FEDF89;"
         "border-radius:8px;padding:8px 14px;font-weight:600;font-size:13px;")

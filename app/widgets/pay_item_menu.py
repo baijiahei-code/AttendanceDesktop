@@ -1,4 +1,4 @@
-"""添加工资项的二级菜单 —— 替代原 SalaryPageMixin._pi_open_add_menu 巨方法。
+"""添加工资项的二级菜单。
 
 二级菜单结构：
     ● 计入最低工资标准的工资   可选 N 项  ▸
@@ -52,6 +52,8 @@ class PayItemCatalogMenu(QMenu):
         self.setStyleSheet(_MENU_QSS)
         self.setToolTipsVisible(True)
         self._used: set[str] = set()
+        # 自己造的子菜单（parent 是本菜单）—— rebuild 时要显式销毁，理由见 build()
+        self._subs: list[QMenu] = []
 
     def set_used_names(self, used: set[str]):
         """设置「已添加」的名称集合 —— 会在子菜单里显示 ✓ 已添加并置灰。"""
@@ -60,9 +62,15 @@ class PayItemCatalogMenu(QMenu):
     def build(self):
         """构造菜单结构。可重复调用以刷新「已添加」状态。"""
         self.clear()
+        # ⚠ clear() 只删「直接属于本菜单」的 action；子菜单的 menuAction 归子菜单自己，
+        # 不会被清掉 —— 不显式销毁的话，每弹一次菜单就积一组子菜单（4 类 × 每类 1 个）。
+        for sub in self._subs:
+            sub.deleteLater()
+        self._subs.clear()
         used = self._used
         for t_key, t_name in model.PAYITEM_TYPES:
             sub = QMenu(self)
+            self._subs.append(sub)
             sub.setStyleSheet(_MENU_QSS)
             sub.setToolTipsVisible(True)
             catalog = model.PAYITEM_CATALOG.get(t_key, [])
@@ -96,12 +104,13 @@ class PayItemCatalogMenu(QMenu):
             )
 
     def popup_for(self, btn: QPushButton):
-        """绑定到具体按钮下方弹出。如未传按钮则 exec() 显示。"""
+        """在指定按钮下方弹出（btn 必传：菜单常驻挂在按钮上，没有按钮就没有落点）。
+
+        注：以前这里有个 ``else: self.exec_()`` 分支，但从未被走到，而且
+        ``exec_`` 是 PySide6 已弃用的别名，真走到会直接 AttributeError。
+        """
         self.build()
-        if btn is not None:
-            self.popup(btn.mapToGlobal(QPoint(0, btn.height() + 6)))
-        else:
-            self.exec_()
+        self.popup(btn.mapToGlobal(QPoint(0, btn.height() + 6)))
 
     @staticmethod
     def _dot_icon(color: str, d: int = 12) -> QIcon:

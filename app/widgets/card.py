@@ -27,8 +27,8 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QAbstractSpinBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QAbstractSpinBox, QComboBox, QFrame, QHBoxLayout, QLabel,
+    QLineEdit, QVBoxLayout, QWidget,
 )
 
 
@@ -44,9 +44,11 @@ _VARIANT_CSS = {
 
 # 卡片内可交互控件类型（用于锁定时禁用）。
 # 锁定语义是「不允许再触发 valueChanged / 选中 / 编辑等」；
-# 因此 spin / combo / lineedit / pushbutton / checkbox / table 都纳入。
+# 因此 spin / combo / lineedit / 表格（QTableWidget / QListView…）都纳入。
+# 按钮类（QPushButton / QCheckBox…）靠 _apply_lock_to 里的
+# `hasattr(w, "setCheckable")` 兜住 —— 它们没有共同的可导入基类可枚举。
 _INTERACTIVE_TYPES = (
-    QAbstractSpinBox, QComboBox, QLineEdit,
+    QAbstractSpinBox, QComboBox, QLineEdit, QAbstractItemView,
 )
 
 
@@ -150,7 +152,12 @@ class Card(QFrame):
         return self._variant
 
     def body_layout(self) -> QVBoxLayout:
-        """返回内容区 layout，需要做 GridLayout / HBoxLayout 时请用 add_layout。"""
+        """返回内容区 layout，需要做 GridLayout / HBoxLayout 时请用 add_layout。
+
+        ⚠ 拿到 layout 后自己 ``addWidget`` 的控件**不会被追踪**（不会参与
+        :meth:`set_locked` 批量禁用）—— 确实需要参与锁定就补一句
+        :meth:`track_extra` 把那个控件或子 layout 登记进来。
+        """
         return self._body
 
     def add_widget(self, w: QWidget) -> QWidget:
@@ -160,11 +167,12 @@ class Card(QFrame):
         return w
 
     def add_layout(self, lay) -> None:
-        """往卡片内容区加一个 layout（QGridLayout / QHBoxLayout 等）。"""
+        """往卡片内容区加一个 layout（QGridLayout / QHBoxLayout 等）。
+
+        layout 里嵌套的控件**会**被锁定（``_apply_lock_to`` 对 layout 递归
+        ``itemAt``），所以调用方不需要再自己遍历 disable。
+        """
         self._body.addLayout(lay)
-        # layout 本身不是 widget，但里面若有可交互控件，调用方应自行管理
-        # 锁定 —— 通常 layout 内的控件会被调用方持有引用并独立 disable。
-        # 这里仅记录「该 layout 整体」以便锁定时调用方可以遍历。
         self._tracked.append(lay)  # type: ignore[arg-type]
 
     def add_toolbar_widget(self, w: QWidget) -> QWidget:

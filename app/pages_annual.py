@@ -151,7 +151,7 @@ class AnnualPageMixin:
         table.setItem(row, col, it)
 
     def _export_annual_xlsx(self):
-        """把全年汇总写到 .xlsx（替代原系统打印对话框；用户选保存位置）。"""
+        """把全年汇总写到 .xlsx（用户选保存位置）。"""
         if self._book is None:
             return
         year = int(self._annual_year or self._book.year)

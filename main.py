@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication
 # 保证从仓库根以 `python main.py` 启动时 `app` 包可导入（兼容其它工作目录启动）
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from app.i18n import install_qt_translations  # noqa: E402
 from app.main_window import MainWindow  # noqa: E402
 from app.single_instance import InstanceServer, allow_multi_instance, notify_existing  # noqa: E402
 from app.storage import MonthStore  # noqa: E402
@@ -40,6 +41,9 @@ def _bring_to_front(win: MainWindow) -> None:
 
 def main() -> int:
     app = QApplication(sys.argv)
+    # Qt 自带文案（输入框右键菜单的「复制 / 粘贴」、对话框的「确定 / 取消」等）来自 Qt 的
+    # qtbase_zh_CN.qm，必须显式安装翻译；否则这些地方会显示英文（中英混杂）。
+    install_qt_translations(app)
     app.setApplicationName("工作考勤表")
     icon_file = _icon_path()
     if os.path.exists(icon_file):
