@@ -57,7 +57,7 @@ def fetch(url: str, timeout: int = 30) -> str:
 
 def latest_issue_url(index_html: str, base: str = MIRROR_INDEX) -> tuple[str, str]:
     """从栏目页里挑出最新一期「最低工资标准情况」文章，返回 (标题, 绝对URL)。"""
-    best: tuple[str, str] | None = None
+    best: tuple[str, str, str] | None = None   # (排序键 t日期, 绝对URL, 标题)
     for m in re.finditer(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', index_html, re.S | re.I):
         href = m.group(1)
         title = unescape(re.sub(r"<[^>]+>", "", m.group(2))).strip()
@@ -66,10 +66,10 @@ def latest_issue_url(index_html: str, base: str = MIRROR_INDEX) -> tuple[str, st
         stamp = re.search(r"t(\d{8})_", href)
         key = stamp.group(1) if stamp else "0"
         if best is None or key > best[0]:
-            best = (key, f"{base.rstrip('/')}/{href.lstrip('./')}", title)  # type: ignore[assignment]
+            best = (key, f"{base.rstrip('/')}/{href.lstrip('./')}", title)
     if best is None:
         raise SystemExit("栏目页里没找到「最低工资标准情况」文章，请手工确认镜像地址")
-    return best[2], best[1]  # type: ignore[return-value]
+    return best[2], best[1]
 
 
 def parse_table(html: str) -> dict[str, list[tuple[float, float]]]:
@@ -152,7 +152,11 @@ def diff_summary(official: dict[str, list[tuple[float, float]]]) -> list[str]:
 
 def main(argv: list[str]) -> int:
     if "--file" in argv:
-        path = Path(argv[argv.index("--file") + 1])
+        i = argv.index("--file")
+        if i + 1 >= len(argv):
+            print("用法：python scripts/update_minwage.py [--list] [--file <已抓下的 HTML>]")
+            return 2
+        path = Path(argv[i + 1])
         html = path.read_text(encoding="utf-8")
         src = str(path)
     else:

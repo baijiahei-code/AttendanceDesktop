@@ -1,8 +1,10 @@
 """后台任务工具：把耗时的阻塞调用（网络请求、API 查询）放到线程池执行。
 
-为什么需要：wages.fetch / fetch_holidays / test_connection 都是同步的
-urllib 请求（超时 15 秒）。如果直接在 Qt 主线程调用，整个界面会在等待
-期间冻结（无法拖动、无法点击、无响应），用户感受就是“软件卡死”。
+为什么需要：wages 的几个取数入口（``fetch_local`` / ``fetch_wage_api`` /
+``fetch_holidays_local`` / ``fetch_holidays_api`` / ``test_connection``）都是同步
+urllib 请求（``wages.CHAT_TIMEOUT`` = 25 秒，节假日 :data:`HOLIDAY_TIMEOUT` = 45 秒）。
+如果直接在 Qt 主线程调用，整个界面会在等待期间冻结（无法拖动、无法点击、无响应），
+用户感受就是“软件卡死”。
 
 用法（回调都在主线程执行，可以安全地更新界面）::
 
@@ -61,8 +63,9 @@ class AsyncCall(QObject):
     """一次后台调用的句柄：持有信号对象，直到任务结束。
 
     自身是 ``QObject``（在主线程创建）→ 信号用队列连接投递，**回调必然在主线程执行**，
-    可以安全更新界面。``cancel()`` 会放弃**全部**回调（含 on_done / on_failed），
-    因此窗口关闭 / 页面销毁后回来的结果不会再触碰界面。
+    可以安全更新界面。``cancel()`` 会放弃**结果类**回调（``on_done`` / ``on_failed``）——
+    因此窗口关闭 / 页面销毁后回来的结果不会再触碰界面；但 ``on_finished``
+    **仍会执行**（各页面靠它把「查询中…」按钮恢复可用）。
     """
 
     def __init__(self, fn: Callable[[], object],
@@ -85,7 +88,10 @@ class AsyncCall(QObject):
         return self
 
     def cancel(self):
-        """放弃这次调用的**全部**回调（请求本身无法中断，仅忽略结果）。"""
+        """放弃这次调用的**结果类**回调（on_done / on_failed）；请求本身无法中断，仅忽略结果。
+
+        ``on_finished`` 不受影响 —— 它负责恢复按钮可用状态，必须照常执行。
+        """
         self._cancelled = True
 
     # —— 内部：统一在这里判 cancelled + 挡住控件已销毁导致的 RuntimeError ——

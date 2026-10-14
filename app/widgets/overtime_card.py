@@ -13,14 +13,14 @@
 * :attr:`lock_btn`：加班费基数锁按钮（外部监听点击）
 * :meth:`sync(r, book)`：根据 calc 结果刷新三档金额与加班工资合计
 
-注：三档各自的「金额」标签是局部变量（建布局时顺手加进去，没存成属性），
-外部要刷新只能调 ``sync()``。
+注：三档各自的「金额」标签存在**私有**属性 ``_ot_vals`` 里（不对外）；
+外部要刷新一律调 ``sync()``。
 """
 from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
-from .. import config, model
+from .. import calc, config, model
 from ..ui import NumberSpin, make_lock_button
 
 
@@ -42,7 +42,7 @@ class OvertimeCardWidget(QFrame):
         title.setObjectName("cardTitle")
         cl.addWidget(title)
         # 倍率从 config.OT_RATE_* 取数（与徽章、calc 算钱同源），文字保持原有的「×2 / ×3」写法
-        hint = QLabel(config.OVERTIME_TIPS + "；"
+        hint = QLabel(calc.overtime_hourly_tip() + "；"
                       f"工作日 ×{config.OT_RATE_WORKDAY:g} · "
                       f"休息日 ×{config.OT_RATE_RESTDAY:g} · "
                       f"法定节假日 ×{config.OT_RATE_HOLIDAY:g}")
@@ -55,7 +55,7 @@ class OvertimeCardWidget(QFrame):
                         decimals=2, step=1.0, suffix="元", badge=None,
                         amount_lab=None)
         for kind in ("workday", "restday", "holiday"):
-            display, _mult, fg, bg = config.OVERTIME_RATE[kind]
+            display, fg, bg = config.OVERTIME_RATE[kind]
             attr = f"{kind}_ot_hours"
             self._ot_vals[kind] = QLabel(config.MONEY_FMT.format(0.0))
             self._ot_vals[kind].setObjectName("piTotal")
@@ -92,7 +92,7 @@ class OvertimeCardWidget(QFrame):
         cl.addWidget(ob_hint)
 
         # —— 加班工资合计（含固定加班工资）──
-        self._total = QLabel("加班工资合计 ¥ 0.00")
+        self._total = QLabel("加班工资合计 " + config.MONEY_FMT.format(0.0))
         self._total.setObjectName("piTotal")
         self._total.setToolTip("加班工资合计 = 固定加班工资 + 工作日/休息日/法定节假日加班工资")
         cl.addWidget(self._total)
@@ -162,4 +162,4 @@ class OvertimeCardWidget(QFrame):
             config.MONEY_FMT.format(r.overtime_wage_holiday))
         fixed = float(getattr(b, "fixed_overtime_wage", 0.0) or 0.0) if b is not None else 0.0
         self._total.setText(
-            f"加班工资合计 ¥ {r.overtime_wage_total + fixed:,.2f}")
+            "加班工资合计 " + config.MONEY_FMT.format(r.overtime_wage_total + fixed))

@@ -583,6 +583,26 @@ assert win_u._add_unit_btn.isEnabled(), "月份锁不该拦住本页（数据不
 win_u._book.locked = False
 win_u._apply_lock_state(False)
 
+# ---- 单位登记表那把锁**持久化**（用户 2026-10-14：重启软件后锁就没了）----
+assert store_u.load_settings().get("units_locked") is False, "解锁态也应落盘"
+win_u._units_lock_btn.click()                        # 锁上 → 写进 settings.json
+assert win_u._units_is_locked() is True
+assert store_u.load_settings()["units_locked"] is True, "锁态应持久化到 settings.json"
+# 模拟「重新打开软件」：同一数据目录新建 store + 窗口 → 单位表仍是锁上的
+assert MonthStore(_tmp_u).load_units_locked() is True
+win_re = MainWindow(MonthStore(_tmp_u))
+assert win_re._units_is_locked() is True, "重启后单位表的锁应保持"
+assert not win_re._units_lock_banner.isHidden(), "重启后仍应挂本页只读横幅"
+assert not win_re._add_unit_btn.isEnabled()
+assert win_re._unit_rows and not win_re._unit_rows[0].name.isEnabled()
+win_re._units_lock_btn.click()                       # 解开 → 也要落盘
+assert win_re._units_is_locked() is False
+assert MonthStore(_tmp_u).load_units_locked() is False
+win_re.close()
+win_u._units_lock_btn.click()                        # 复位 win_u（此刻它是锁上的）
+assert win_u._units_is_locked() is False
+assert store_u.load_settings()["units_locked"] is False
+
 # 空行照常保留（不做任何「兼容清理」）：新增一行不填内容 → 也在设置里
 win_u._add_unit_row("bank")
 _n_blank = len(win_u._units_list())
@@ -637,6 +657,10 @@ class _FakeMenu:
         _FakeMenu.items = [x.text for x in self.acts]
         _FakeMenu.last_acts = list(self.acts)
         return self.acts[self.pick]
+
+    def deleteLater(self):
+        """真 QMenu 用完要销毁（生产代码会调）；假菜单什么都不做。"""
+        pass
 
 
 _orig_menu = pages_units.QMenu
@@ -1614,3 +1638,163 @@ _lst = _w.pay_items
 if _lst.rows:
     _lst.ensure_visible_row(_lst.rows[0])   # 不抛异常即可（真实窗口里会滚过去）
 print("ensure visible row OK")
+
+# ---- ⑨ 全量审计（2026-10-14）：设置文件加固 / 备注同步 / 年度页切月 / 锁定月丢弃在途结果 ----
+
+# 9.1 参数页：加班费基数 / 公积金基数 不能填负数
+#   修复前：这两行的 spin 是手工 new 的（绕过了 _add_spin_field 的 minimum=0）→ 取下限 -1e12，
+#   解锁字段后能填负基数 → 加班工资 / 公积金算成负数且没有任何提示。
+for _attr in ("overtime_base", "fund_base"):
+    _sp = _w._param_spins.get(_attr)
+    assert _sp is not None, _attr
+    assert _sp.minimum() == 0.0, (_attr, _sp.minimum())
+print("param spin negatives blocked OK")
+
+# 9.2 套用模板：备注框必须跟着回填
+#   修复前：只改 book.note，界面还是旧文字 —— 用户再敲一个字符就把模板里的备注整段顶掉。
+_tpls = _w._load_templates()
+_tpls.append({"name": "审计·备注模板", "params": {"note": "模板里的备注"}})
+assert _w._save_templates(_tpls) is True
+_w._refresh_templates()
+_w._book.locked = False
+_w.tpl_combo.setCurrentText("审计·备注模板")
+_w._note_edit.setText("手填的旧备注")
+_w._book.note = "手填的旧备注"
+_w._apply_template()
+assert _w._book.note == "模板里的备注", _w._book.note
+assert _w._note_edit.text() == "模板里的备注", _w._note_edit.text()
+assert _w._loading is False, "套用模板后 _loading 必须复位（否则之后所有保存都会静默失效）"
+print("template note sync OK")
+
+# 9.3 settings.json 加固：原子写 + 留 .bak + 解析失败不静默清空 + 解不开的密文不再套娃
+_ts = MonthStore(tempfile.mkdtemp())
+assert _ts.save_settings({"api_url": "http://a", "province": "安徽"}) is True
+assert _ts.save_settings({"api_url": "http://b", "province": "安徽"}) is True
+assert _ts.load_settings().get("api_url") == "http://b"
+assert os.path.exists(os.path.join(_ts.dir, "settings.json.bak")), "第二版起应留 .bak"
+with open(os.path.join(_ts.dir, "settings.json"), "w", encoding="utf-8") as _f:
+    _f.write("{ 这是坏掉的 JSON")     # 模拟写到一半崩溃 / 手改坏
+_recovered = _ts.load_settings()
+assert _ts.last_error, "解析失败必须记 last_error（不能静默）"
+assert _recovered.get("api_url") == "http://a", _recovered   # 从 .bak 恢复上一版
+# 解不开的令牌（crypto.unprotect 失败会原样返回）不能再加密一层，否则每次保存都套娃
+assert _ts.save_settings({"api_key": "gm1:a.b.c.d"}) is True
+with open(os.path.join(_ts.dir, "settings.json"), encoding="utf-8") as _f:
+    _txt = _f.read()
+assert "gm1:a.b.c.d" in _txt, _txt
+print("settings atomic + recover OK")
+
+# 9.4 停在「年度汇总」页切月 → 该页必须重建
+#   修复前：年度页只在自己被 _show_page 时刷新，而 _build_pages() 不含它 →
+#   停留在年度页切月，表格一直是上一个月份的陈旧数据。
+_aw = MainWindow(MonthStore(tempfile.mkdtemp()))
+_aw.store.save(model.create_book(2026, 3))
+_aw._go(2026, 3)
+_aw._show_page(PAGE_INDEX["annual"])
+_txt = " ".join(_l.text() for _l in _aw.annual_page.findChildren(QLabel))
+assert "2026 年 · 12 个月一览" in _txt, _txt
+_aw._go(2025, 3)      # 仍在年度页，只换月份
+_txt2 = " ".join(_l.text() for _l in _aw.annual_page.findChildren(QLabel))
+assert "2025 年 · 12 个月一览" in _txt2, "切月后年度汇总未重建：" + _txt2
+_aw.close()
+print("annual refresh on month switch OK")
+
+# 9.5 锁定的月份里回来的联网结果必须丢弃
+#   修复前：回调没判 _is_locked → 写进内存但 _changed 被拦下不落盘 →
+#   界面显示新值、文件里没有（切月回来就“消失”）。
+_mw0 = float(_w._book.min_wage)
+_w._is_locked = True
+_w._on_wage_fetched("安徽", "池州", _w._book.year, _w._book.month,
+                    {"min_wage": 9999.0, "parttime_min": 99.0})
+assert float(_w._book.min_wage) == _mw0, "锁定月不该套用取回结果"
+_w._is_locked = False
+print("locked in-flight result dropped OK")
+
+# 9.6 手改过的存档：类型不对的字段必须安全解析
+#   `year`/`month` 是字符串 → MonthStore.save 的 f"{year:04d}" 直接 ValueError 崩掉；
+#   `locked` 是字符串 "false" → bool("false") 为真 → 整月被误判成只读。
+_dirty = model.MonthBook.from_dict({"year": "2026", "month": "3", "locked": "false",
+                                    "income_tax_auto": "no", "min_wage": "2170.5",
+                                    "hours_per_day": "8"})
+assert _dirty.year == 2026 and isinstance(_dirty.year, int), _dirty.year
+assert _dirty.month == 3 and isinstance(_dirty.month, int), _dirty.month
+assert _dirty.locked is False, _dirty.locked
+assert _dirty.income_tax_auto is False, _dirty.income_tax_auto
+assert abs(_dirty.min_wage - 2170.5) < 1e-9, _dirty.min_wage
+assert _dirty.n_days == 31, _dirty.n_days      # year/month 解析对了才铺得出天数
+print("dirty archive fields coerced OK")
+
+# 9.7 节假日重铺是「覆盖」：错误的状态 / 法定标记必须能被正确数据洗掉
+#   修复前：new_mark 从 d.mark 起算、只有法定日分支改成 1 → 被错误数据（旧版 API 会把
+#   2025 春节当成 2026 的）标过 mark=1 的天，重铺正确数据后仍然是法定日。
+_hw = MainWindow(MonthStore(tempfile.mkdtemp()))
+_hw.store.save(model.create_book(2026, 1))
+_hw._go(2026, 1)
+_hd = {x.day: x for x in _hw._book.days}
+_hd[1].status, _hd[1].mark = "上班", 0      # 1/1 是法定日，原状态故意填错
+_hd[10].status, _hd[10].mark = "上班", 1    # 1/10 是周六，被错误标成法定日 + 上班
+_hd[12].status, _hd[12].mark = "年假", 1    # 1/12 是周一（不在铺设范围）：状态不该动
+_hw._apply_holidays(2026, 1, {"statutory": ["01-01"],
+                              "rest": ["01-01", "01-02"],
+                              "makeup": [], "source": "local"})
+_hd = {x.day: x for x in _hw._book.days}
+assert _hd[1].status == "休息" and _hd[1].mark == 1, (_hd[1].status, _hd[1].mark)
+assert _hd[10].status == "休息" and _hd[10].mark == 0, "错误的法定标记没被洗掉"
+assert _hd[12].status == "年假", "非铺设范围的日期状态不该被改"
+assert _hd[12].mark == 0, "法定标记整月重写：范围外的旧标记也要清掉"
+_hw._change_timer.stop()
+_hw.close()
+print("holiday refill overwrites OK")
+
+# 9.8 年度页异常兜底：单月核算失败 → 该月按「—」+ 页内提示；整页失败 → 一行提示
+#   修复前：_annual_rows / _fill_annual 没有任何兜底，异常会直接冒进 Qt 槽。
+_bstore = MonthStore(tempfile.mkdtemp())
+_bstore.save(model.create_book(2026, 2))
+_bw = MainWindow(_bstore)
+_bw._go(2026, 2)
+_orig_compute = calc.compute
+
+
+def _boom_compute(*_a, **_kw):
+    raise RuntimeError("模拟坏数据")
+
+
+calc.compute = _boom_compute
+try:
+    _bw._show_page(PAGE_INDEX["annual"])
+finally:
+    calc.compute = _orig_compute
+_txt_err = " ".join(_l.text() for _l in _bw.annual_page.findChildren(QLabel))
+assert "已按「—」显示" in _txt_err, _txt_err
+
+
+def _boom_rows(*_a, **_kw):
+    raise RuntimeError("模拟整页失败")
+
+
+_bw._annual_rows = _boom_rows
+_bw._show_page(PAGE_INDEX["annual"])
+_txt_err2 = " ".join(_l.text() for _l in _bw.annual_page.findChildren(QLabel))
+assert "年度汇总渲染失败" in _txt_err2, _txt_err2
+_bw.close()
+print("annual page error fallback OK")
+
+# 9.9 报表页：单层滚动区（页面已被外层滚动区包住）+ 渲染异常兜底
+from PySide6.QtWidgets import QScrollArea as _QSA  # noqa: E402
+assert _w.report_lay is _w._report_lay, "报表内容应直接放在页面布局里（否则是双层滚动条）"
+assert not _w.report_page.findChildren(_QSA), "报表页里不该再嵌一层 QScrollArea"
+_orig_render_body = _w._render_report_body
+
+
+def _boom_report(*_a, **_kw):
+    raise RuntimeError("模拟报表失败")
+
+
+_w._render_report_body = _boom_report
+try:
+    _w._render_report(_w._last_result)
+    _txt_rep = " ".join(_l.text() for _l in _w.report_page.findChildren(QLabel))
+    assert "报表渲染失败" in _txt_rep, _txt_rep
+finally:
+    _w._render_report_body = _orig_render_body
+print("report page single scroll + fallback OK")

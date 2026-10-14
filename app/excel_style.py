@@ -8,14 +8,18 @@ from __future__ import annotations
 
 from openpyxl.styles import Border, Font, PatternFill, Side
 
+from . import config
+
 
 # ====== 颜色常量（品牌色：靛紫 #4F46E5 / 默认深灰 #0F172A）======
+# ⚠ 「合规 / 违规」两色与界面同一份（config.OK_COLOR / BAD_COLOR）——
+#   以前这里与 pages_report / pages_annual 各自手写一份 #0B7A3B / #C00000。
 _BRAND_INDIGO = "4F46E5"
 _BODY_GRAY = "0F172A"
 _WHITE = "FFFFFF"
 _INFO_GRAY = "667085"
-_BAD_RED = "C00000"
-_OK_GREEN = "0B7A3B"
+_BAD_RED = config.BAD_COLOR.lstrip("#")
+_OK_GREEN = config.OK_COLOR.lstrip("#")
 _BORDER_GRAY = "D0D5DD"
 _SECTION_INDIGO_BG = "EEF2FF"
 _OK_GREEN_BG = "ECFDF3"

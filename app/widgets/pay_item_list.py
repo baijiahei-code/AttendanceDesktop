@@ -28,8 +28,11 @@ class PayItemListWidget(QFrame):
     -------
     changed()
         任意一条工资项的 name / amount / type / 新增 / 删除引发该信号，外部做小计重算。
-    insert_requested_at(str, int)
-        外部插入新数据后，希望把光标滚动到该 index 的行可见。
+    insert_requested_at(int)
+        新行插入完成后发出，参数是**它在 rows 里的下标**（不是“最后一行” —— 按类型
+        分组插入时会插在中间）。外部据此把该行滚到可见区域。
+    copy_requested()
+        用户点了「复制工资项」，由外部弹出复制对话框。
     """
 
     changed = Signal()
@@ -93,7 +96,7 @@ class PayItemListWidget(QFrame):
         h.setObjectName("piHeader")
         h.setFixedHeight(config.PAYITEM_HEADER_HEIGHT)
         hl = QHBoxLayout(h)
-        hl.setContentsMargins(10, 0, 10, 1)
+        hl.setContentsMargins(config.PAYITEM_ROW_PAD_X, 0, config.PAYITEM_ROW_PAD_X, 1)
         hl.setSpacing(8)
         widths = config.PAYITEM_COL_WIDTHS
 

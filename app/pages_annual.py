@@ -1,6 +1,8 @@
 """年度汇总页：全年 12 个月考勤与工资一览表，支持导出 Excel。"""
 from __future__ import annotations
 
+import traceback
+
 from openpyxl import Workbook
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
@@ -12,7 +14,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QSizePolicy, QMessageBox,
 )
 
-from . import calc
+from . import calc, config
 from .excel_style import (
     BORDER, BOLD_FONT, BODY_FONT, BAD_FONT, OK_FONT,
     HEADER_FILL, HEADER_FONT, MONEY_FMT, INT_FMT, FLT_FMT,
@@ -38,24 +40,50 @@ class AnnualPageMixin:
 
         行数据 = ``(月份, 8 项数值列表, work_time_legal 布尔)`` —— 第三项是
         **布尔**（不是「违法 / 不违法」文案）：画表与导出的「合规 / 违法」都由它决定。
+
+        ⚠ **每个月单独 try**：某个月的存档异常（手改坏 / 老版本残留）不该让
+        整张年表都画不出来 —— 那个月按「—」显示，并把月份记进 ``self._annual_errors``。
         """
         rows = []
         totals = [0.0] * (len(_COLS) - 2)  # 出勤..公司成本
+        errors: list[str] = []
         for m in range(1, 13):
             book = self.store.load(year, m)
             if book is None:
                 rows.append(None)
                 continue
-            r = calc.compute(book)
+            try:
+                r = calc.compute(book)
+            except Exception as ex:
+                traceback.print_exc()
+                errors.append(f"{m} 月（{ex}）")
+                rows.append(None)
+                continue
             vals = [float(r.counts.work), r.total_daily_ot_hours, r.daily_leave_hours,
                     r.gross_wage, r.personal_deductions_total, r.leave_deduction_total,
                     r.take_home, r.gross_wage + r.company_social + r.company_fund]
             rows.append((m, vals, r.work_time_legal))
             for i, v in enumerate(vals):
                 totals[i] += v
+        self._annual_errors = errors
         return rows, totals
 
     def _fill_annual(self):
+        """渲染年度页。
+
+        ⚠ 异常兜底：这个方法会被 ``_show_page`` / ``_go``（都是 Qt 信号槽路径）调到，
+        抛出去只会得到一段 traceback 打印 + 半张没画完的页面；这里直接转成
+        本页顶部的一行可读提示（其余功能不受影响）。
+        """
+        if self._book is None or not hasattr(self, "annual_lay"):
+            return
+        try:
+            self._fill_annual_body()
+        except Exception as ex:
+            traceback.print_exc()
+            self._render_page_error(self.annual_lay, "年度汇总", ex)
+
+    def _fill_annual_body(self):
         if self._book is None or not hasattr(self, "annual_lay"):
             return
         if not self._annual_year:
@@ -64,7 +92,7 @@ class AnnualPageMixin:
         self._clear_layout(lay)
         year = int(self._annual_year)
 
-        # —— 顶栏：年份切换 + 打印 ——
+        # —— 顶栏：年份切换 + 导出 ——
         bar = QHBoxLayout()
         bar.setSpacing(8)
         prev_y = QPushButton("‹ 上一年")
@@ -73,15 +101,15 @@ class AnnualPageMixin:
         next_y.clicked.connect(lambda: self._annual_shift(1))
         title = QLabel(f"{year} 年 · 12 个月一览")
         title.setObjectName("cardTitle")
-        printb = QPushButton("📊 导出 Excel")
-        printb.setObjectName("ghost")
-        printb.setCursor(Qt.PointingHandCursor)
-        printb.clicked.connect(self._export_annual_xlsx)
+        exportb = QPushButton("📊 导出 Excel")
+        exportb.setObjectName("ghost")
+        exportb.setCursor(Qt.PointingHandCursor)
+        exportb.clicked.connect(self._export_annual_xlsx)
         bar.addWidget(prev_y)
         bar.addWidget(title)
         bar.addWidget(next_y)
         bar.addStretch(1)
-        bar.addWidget(printb)
+        bar.addWidget(exportb)
         lay.addLayout(bar)
 
         # —— 表格卡片（Card 化）——
@@ -93,7 +121,7 @@ class AnnualPageMixin:
         cv.addWidget(hint)
 
         rows, totals = self._annual_rows(year)
-        self._annual_cache = (year, rows, totals)  # 缓存供打印复用
+        self._annual_cache = (year, rows, totals)  # 缓存供导出 Excel 复用
         table = QTableWidget(13, len(_COLS))
         table.setHorizontalHeaderLabels(_COLS)
         table.verticalHeader().setVisible(False)
@@ -124,19 +152,31 @@ class AnnualPageMixin:
                 self._annual_cell(table, row, c, t)
             self._annual_cell(table, row, len(_COLS) - 1,
                               "合规" if legal_ok else "违法",
-                              color=("#0B7A3B" if legal_ok else "#C00000"), bold=True, center=True)
+                              color=(config.OK_COLOR if legal_ok else config.BAD_COLOR),
+                              bold=True, center=True)
 
-        # 合计行
+        # 合计行（数字格式与上面的月行保持一致：出勤 :g / 加班・请假 .1f / 金额 ,.2f）
         last = 12
         self._annual_cell(table, last, 0, "合计", bold=True, center=True)
         for i, v in enumerate(totals, start=1):
-            t = f"{v:g}" if i <= 3 else f"{v:,.2f}"
+            if i == 1:
+                t = f"{v:g}"
+            elif i in (2, 3):
+                t = f"{v:.1f}"
+            else:
+                t = f"{v:,.2f}"
             self._annual_cell(table, last, i, t, bold=True)
         self._annual_cell(table, last, len(_COLS) - 1, "", dim=True)
 
         cv.addWidget(table, 1)
+        if getattr(self, "_annual_errors", None):
+            # 某些月份核算失败：已按「—」显示，这里说清楚是哪几个月
+            warn = QLabel("⚠ 以下月份的数据有问题，已按「—」显示：" + "、".join(self._annual_errors))
+            warn.setWordWrap(True)
+            warn.setStyleSheet("color:#B54708;background:#FEF4E6;border:1px solid #FEDF89;"
+                               "border-radius:8px;padding:6px 10px;font-size:12px;")
+            cv.addWidget(warn)
         lay.addWidget(card, 1)
-        self._annual_table = table
 
     @staticmethod
     def _annual_cell(table, row, col, text, bold=False, dim=False,

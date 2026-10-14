@@ -135,7 +135,8 @@ card.set_locked(True)         # 一键禁用卡片内所有交互控件
 
 **「相关单位」页不在 `_is_locked` 的管辖范围内** —— 它的数据是**全局**的
 （与月份无关，存在 `settings.json` 的 `units`，见下）。可改性只由它自己那把锁
-（`pages_units._units_lock_btn`，会话级）控制：
+（`pages_units._units_lock_btn`，锁态持久化在 `settings.json` 的 `units_locked`，
+**重启后保持**）控制：
 
 - `_apply_lock_state` 的钩子里**没有** `_set_units_locked`（只 参数 / 考勤 / 薪酬 三页）；
 - 所以整月锁定时本页照常可编辑，改动只写 `settings.json`、**不碰月度存档**
@@ -577,3 +578,64 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 17. **文档字符串描述不存在的成员**：加班卡片里那个并未保存成属性的“每档总额”、
     个人扣除卡片并未公开的“total”、刷新月小计的签名写多了一个参数、
     卡片框架 `add_layout` 那句“锁定要调用方自己管”（其实会递归）已全部改正
+
+### 全量代码审计（2026-10-14）
+
+18. **`settings.json` 不是原子写、坏了还静默当空**：月份存档走 `.tmp`+`os.replace`，
+    设置文件却是直接截断覆写；`load_settings()` 解析失败时**静默返回 `{}`**，之后任意一次保存
+    （改相关单位、单位表锁）都会以空字典为基底整文件覆写 → `api_url` / `api_key` / 省份**全被抹掉**。
+    已改为：原子写 + 保留 `settings.json.bak` + 解析失败记 `last_error` 并从 `.bak` 恢复。
+    顺带修掉「解密失败的令牌被再加密一层」的套娃（`crypto.unprotect` 失败会原样返回令牌，
+    保存时若检测到它就以 `dpapi:` / `gm1:` 开头就跳过加密，不再污染）
+19. **切月时「年度汇总」页不重建**：`_build_pages()` 里只有 overview/units/params/calendar/salary/report，
+    年度页只在自己被 `_show_page` 时刷新 → **停留在年度页切月，表格一直显示上个月的陈旧数据**。
+    `_go()` 末尾按当前页补一次 `_fill_annual()`
+20. **锁定的月份里回来的联网结果仍会写内存**：`_on_wage_fetched`（最低工资）与 `_apply_holidays`
+    （节假日铺设）只判了「月份是否切换」，没判 `_is_locked` → 结果写进账本但 `_changed()` 被拦下不落盘，
+    表现为「界面显示新值、文件里没有」（切月回来就“消失”）。两个回调都补了锁定守卫；
+    `_on_copy_pay_items`（直接写目标月文件）也补上 API 层的锁守卫，与其它写入入口同口径
+21. **`QMenu` 泄漏**：「月份 ▾」弹层、历史月份右键菜单、日历格子右键、相关单位的「🔍」与「＋ 添加单位」
+    都以常驻的窗口 / 列表为父对象且用完不销毁 → 每次点开都多一个 QMenu。改为
+    `WA_DeleteOnClose`（弹层）或读完 `chosen.data()` 后 `deleteLater()`
+22. **日历星期表头是幽灵控件**：`_render_calendar` 重绘时只 `takeAt(0)` 不删除 →
+    每次重绘泄漏 7 个 QLabel（与 `_clear_layout` 注释里记的是同一个坑）。改为隐藏 + `deleteLater()`
+23. **参数页两个手建的 spin 绕过了 `minimum=0`**（加班费基数 / 公积金缴费基数）：解锁字段后能填负数，
+    负基数会让加班工资 / 公积金算成负数且没有任何提示（同页其它字段在工厂里就挡住了）。
+    另：备注框原来用 `textChanged` 且套用模板**不回填** → 界面还是旧文字，用户再敲一个字符
+    就把模板里的备注整段顶掉；`_apply_template` 的 `_loading` 也没有 `try/finally`
+    （一旦中途抛异常，`_loading` 永久为 True → 之后所有保存静默失效）
+24. **「删除本月」会被自己写回来**：`store.delete()` 之后 `_go()` 开头「有未保存改动就先落盘」
+    会把刚删掉的月份文件重新写回去（表现为删不掉）。删除前先 `_change_timer.stop()` + 清 `_dirty`。
+    另：`_focus_new_row` 丢掉了 `insert_requested_at` 携带的下标、固定滚 `rows[-1]` →
+    按类型分组插入时会滚到无关的行
+25. **工作台把合规判定重算了一遍**（`r.wage_components_total >= b.min_wage`）—— `calc` 早已把
+    `min_wage_ok` 作为唯一真相；同一张卡的第二项却用的是布尔。已改为读 `r.min_wage_ok`。
+    顺手删掉永远不成立的 `company_hourly_cost is None` 分支（它的兜底还是个**空标签**）——
+    分母为 0 时明确显示「待录入考勤 / 工时后显示」
+26. **同一份数字 / 颜色 / 格式在多处手写**：合规色 3 处 → `config.OK_COLOR` / `BAD_COLOR`
+    （`excel_style` 从它派生）；金额格式 `¥ {x:,.2f}` 5 处 → `config.MONEY_FMT`；
+    「时薪 = 基数 ÷ (21.75 × 8 = 174)」→ `calc.overtime_hourly_tip()`（数字取自 `PAYABLE_DAYS`）；
+    `OVERTIME_RATE` 里没人读的“倍率”字段删掉（倍率的唯一出处是 `OT_RATE_*`）；
+    表头与数据行的左右内边距 → `config.PAYITEM_ROW_PAD_X`
+27. **手改过的存档会把程序带崩 / 误判**：`from_dict` 只对 float 字段做了安全解析 ——
+    `year` / `month` 是字符串时 `MonthStore.save` 的 `f"{year:04d}"` 直接 ValueError，
+    `locked` 是字符串 `"false"` 时 `bool("false")` 为真 → **整月被误判成只读**。
+    改为按声明类型分别走 `_safe_float` / `_safe_int` / `_safe_bool`（`model._typed_fields()`）
+28. **死代码 / 只写不读的状态**：`_pi_delete` / `_pi_rename` / `_pi_amount` / `_pi_chtype` 四个空回调、
+    `_overview_cards`、`_about_btn`、`params_page`、`_ot_base_lock_btn_salary`、`_annual_table`、
+    `_stat_card(hero=)` 死参数、`wages.py` 广东档位被赋值两次的前一组（后者立即覆盖前者）
+    已清理；`Card.variant` / `OvertimeCardWidget.total` / `PayItemRow.set_amount` 这类
+    **文档化的公开访问器**予以保留（无调用者但属 API 面，删了会动到外部脚本）
+29. **节假日「重铺」只增不减**：`_apply_holidays` 的 `new_mark` 从 `d.mark` 起算、只有法定日分支
+    改成 1 → 被错误数据（旧版 API 实测把 **2025 春节当成 2026 的**）标过 `mark=1` 的天，
+    之后拿**正确**数据重铺也洗不掉，`calc` 的「法定节假日」天数与报表会一直错。
+    改为**覆盖**：状态的覆盖范围是「法定 / 放假调休 / 补班 + 普通周末」，
+    **「法定节假日」标记整月重写**（只有法定日为 1，其余一律清 0）；范围之外的日期状态不动。
+    两个按钮的 tooltip 同步说明「覆盖」
+30. **重数据页没有异常兜底**：`_annual_rows` / `_fill_annual`（年度汇总）与 `_render_report`（报表）
+    都跑在信号槽里，异常抛出去只会打印 traceback 并留下**半张没画完的页面**。现在是两层兜底：
+    `_annual_rows` **每个月单独 try**（坏月按「—」显示 + 页内一行提醒是哪几个月），
+    整页失败则由 `MainWindow._render_page_error()` 清空该页并放一行可读提示（其余页面照常）
+31. **报表页双层滚动区**：`report_page` 已被 `_init_page_widgets` 的 `_scroll_for()` 包了一层
+    `QScrollArea`，`_fill_report` 里又套了一层（外层永远不滚、只有内层滚）。
+    内层已删，内容直接放在页面布局里（`report_root` / `report_lay` 现在就是页面本身）

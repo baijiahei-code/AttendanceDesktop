@@ -15,8 +15,10 @@
 全新安装时按**内置类型各列一行**（不含「其他相关单位」），
 空的直接填；同一类型的第二家 / 自定义单位用「＋ 添加单位」。
 
-**锁定**：只有**本页自己的锁**（卡片标题栏右侧的 🔒 按钮，会话级）能让它只读 ——
-顶部的「月份锁定」不影响本页（数据根本不在月份里）。只读时名称 / 编号 / 增删都冻结，
+**锁定**：只有**本页自己的锁**（卡片标题栏右侧的 🔒 按钮）能让它只读 ——
+顶部的「月份锁定」不影响本页（数据根本不在月份里）。锁态**持久化**在
+``settings.json`` 的 ``units_locked`` 里，**重启软件后仍然保持**
+（与单位表一样属于全局状态，不随月份走）。只读时名称 / 编号 / 增删都冻结，
 但 **「🔍 去搜索」仍然可用**（它只查外部网站，不改数据）。
 """
 from __future__ import annotations
@@ -82,8 +84,8 @@ class _UnitRow:
 class UnitsPageMixin:
     """相关单位页 mixin（由 MainWindow 多继承）。"""
 
-    # 会话级状态（切页 / 切月重建页面都要保留）：类属性只作默认值，实例上再赋值
-    _units_locked = False        # 本页自己的锁
+    # 状态（切页 / 切月重建页面都要保留）：类属性只作默认值，实例上再赋值
+    _units_locked = None         # 本页自己的锁；None=尚未从设置读取（见 _units_is_locked）
     _units_cache = None          # 全局单位表的内存副本（懒加载，见 _units_list）
     _unit_search_last = None     # 上次用过的查询站点 key
 
@@ -147,7 +149,7 @@ class UnitsPageMixin:
                          "（例如先后 / 同时签过多份劳动合同）；列表里没有的类型选「其他相关单位」，"
                          "具体是什么写在「单位名称」栏",
                     toolbar=True)
-        # 本页自己的锁（会话级）：与月份无关，顶部的月份锁定不影响本页。
+        # 本页自己的锁（持久化在 settings.json）：与月份无关，顶部的月份锁定不影响本页。
         self._units_lock_btn = make_lock_button(
             "锁定 / 解锁「单位登记表」：\n"
             "· 锁定时名称、编号、增删都不可改，但「🔍 去搜索」仍可用\n"
@@ -190,7 +192,13 @@ class UnitsPageMixin:
         return card
 
     def _units_is_locked(self) -> bool:
-        """单位登记表是否被**自己的锁**锁住（会话级状态，不写进存档）。"""
+        """单位登记表是否被**自己的锁**锁住。
+
+        锁态**持久化**在 ``settings.json`` 的 ``units_locked``（重启软件后仍然保持），
+        所以首次访问时从设置里懒加载一次 —— 与 :meth:`_units_list` 同一思路。
+        """
+        if self._units_locked is None:
+            self._units_locked = self.store.load_units_locked()
         return bool(self._units_locked)
 
     def _units_ready(self) -> bool:
@@ -218,8 +226,10 @@ class UnitsPageMixin:
         show_lock_banner(self._units_lock_banner, locked)
 
     def _toggle_units_lock(self) -> None:
-        """切换单位登记表自己的锁（不写盘，也不影响当前月份）。"""
-        self._units_locked = not self._units_is_locked()
+        """切换单位登记表自己的锁（写进 settings，重启后保持；不影响当前月份）。"""
+        locked = not self._units_is_locked()
+        self._units_locked = locked
+        self.store.save_units_locked(locked)   # 只写 settings.json，不碰月度存档
         self._refresh_units_lock_ui()
         if self._units_locked:
             self._set_status("单位登记表已锁定：名称 / 编号不可修改，「🔍 去搜索」仍可用", True)
@@ -399,6 +409,7 @@ class UnitsPageMixin:
         if chosen is None:
             return  # 点了空白处 / Esc
         key = chosen.data()
+        menu.deleteLater()   # 菜单以窗口为父对象常驻 → 用完立即销毁
         label, url = next((lab, u) for k, lab, u in UNIT_SEARCH_SITES if k == key)
         self._unit_search_last = key
         QApplication.clipboard().setText(term)
@@ -429,6 +440,7 @@ class UnitsPageMixin:
         if chosen is None:
             return  # 用户点了空白处 / Esc
         key = chosen.data()
+        menu.deleteLater()   # 菜单以窗口为父对象常驻 → 用完立即销毁
         if key == _CUSTOM_MENU_KEY:
             self._add_unit_row(model.UNIT_ROLE_OTHER)
         else:

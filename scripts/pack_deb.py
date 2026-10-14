@@ -275,14 +275,17 @@ def assemble(deb_root: Path, version: str, arch: str) -> None:
                          date=email.utils.formatdate(localtime=True)).encode("utf-8"),
         mtime=0))
 
-    # 权限规范化（必须在内容写完后做）
+    # 权限规范化（主文件树此刻已写完；DEBIAN/ 里的脚本稍后各自 chmod，
+    # control 的权限由 dpkg-deb 自行规范化）
     normalize_perms(deb_root)
 
     # DEBIAN 控制信息（Installed-Size 需在内容定稿后统计）
     ctl = deb_root / "DEBIAN"
     ctl.mkdir(parents=True, exist_ok=True)
     installed_kb = sum(f.stat().st_size for f in deb_root.rglob("*") if f.is_file()) // 1024
-    (ctl / "control").write_text(control_text(version, arch, installed_kb), encoding="utf-8")
+    control = ctl / "control"
+    control.write_text(control_text(version, arch, installed_kb), encoding="utf-8")
+    control.chmod(0o644)
     for name, body in (("postinst", POSTINST), ("prerm", PRERM.format(title=APP_TITLE))):
         f = ctl / name
         f.write_text(body, encoding="utf-8")

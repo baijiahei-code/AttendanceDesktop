@@ -43,6 +43,15 @@ def overtime_rate_text() -> str:
             f"法定节假日×{config.OT_RATE_HOLIDAY:.1f}")
 
 
+def overtime_hourly_tip() -> str:
+    """加班时薪折算方式的提示文案（如「时薪 = 加班费基数 ÷（21.75 × 8 = 174 小时）」）。
+
+    数字取自 :data:`PAYABLE_DAYS` —— 这段文案曾以字面量硬写在 config 里，
+    改了月计薪天数文案不会跟（与 :func:`compliance_standard_text` 同一思路）。
+    """
+    return (f"时薪 = 加班费基数 ÷（{PAYABLE_DAYS:g} × 8 = {PAYABLE_DAYS * 8:g} 小时）")
+
+
 def _round2(v: float) -> float:
     """四舍五入保留 2 位小数。
 

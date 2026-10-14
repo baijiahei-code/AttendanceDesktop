@@ -280,7 +280,6 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
         # 页面
         self.stack = QStackedWidget()
         self.pages_widget = []
-        self.params_page = QWidget()
         self.calendar_page = QWidget()
         self.salary_area = QScrollArea()
         self.salary_area.setWidgetResizable(True)
@@ -414,6 +413,8 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
             self._go(y, m)
         elif chosen is lock_act:
             self._toggle_lock_history_month(y, m, book.locked)
+        # 每次右键都新建一个菜单（父对象 self.history 常驻）→ 用完必须销毁，否则持续泄漏
+        menu.deleteLater()
 
     def _toggle_lock_history_month(self, year: int, month: int, currently_locked: bool):
         """从历史月份列表右键锁定/解锁某月（不切换当前月份）。"""
@@ -473,6 +474,8 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
         high = ("QPushButton{background:#6366F1;border:none;border-radius:9px;"
                 "color:#FFFFFF;font-size:13px;font-weight:700;}")
         menu = QMenu(self)
+        # 弹层用完自动销毁：父对象是常驻的窗口，不设它每点一次「月份 ▾」就多一个 QMenu
+        menu.setAttribute(Qt.WA_DeleteOnClose)
         menu.setStyleSheet("QMenu{background:#FFFFFF;border:1px solid #E6E8F0;padding:6px;}")
         panel = QFrame()
         pv = QVBoxLayout(panel)
@@ -609,6 +612,10 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
             self, "删除月份",
             f"确定删除 {self._book.year} 年 {self._book.month} 月的记录吗？此操作不可恢复。")
         if ans == QMessageBox.Yes:
+            # ⚠ 必须先清掉待保存标记：_go() 开头“有未保存改动就先落盘”会把刚删掉的
+            #    本月文件重新写回去（表现为“删不掉”）。
+            self._change_timer.stop()
+            self._dirty = False
             self.store.delete(self._book.year, self._book.month)
             self._go(self._book.year, self._book.month)
             self._set_status("已删除", True)
@@ -666,6 +673,10 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
         self._refresh_month_label()
         self._build_pages()
         self._annual_year = year  # 切月后年度汇总跟随当前账本年份
+        # ⚠ _build_pages() 不包含年度页（它只在进入该页时由 _show_page 刷新）→
+        #    停在年度页切月时必须主动重画一次，否则表格一直是上个月的陈旧数据。
+        if self._current_page_idx == PAGE_INDEX["annual"]:
+            self._fill_annual()
         self._loading = False
         self._recalc()
         self._refresh_history()
@@ -842,7 +853,9 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
         try:
             r = calc.compute(self._book)
             if self._is_locked:
-                # 只读模式：只刷新可见统计，不写盘、不置 dirty
+                # 只读模式：只刷新可见统计，**不写盘**。
+                # ⚠ 这里刻意**不清** _dirty：改动仍留在内存里，解锁后下一次
+                #   _changed()/_flush_changed() 会把它落盘；清了就等于静默丢弃用户刚做的修改。
                 self._last_result = r
                 self._data_version += 1
                 if hasattr(self, "_cal_chip_labs"):
@@ -987,6 +1000,26 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
         self._set_status("已保存 " + datetime.now().strftime("%H:%M:%S"), True)
 
     # ---------- 工具 ----------
+
+    def _render_page_error(self, layout, page_name: str, ex: Exception) -> None:
+        """页面渲染失败时的兜底：清空该页并放一行可读提示（**不要再抛异常**）。
+
+        重数据页（报表 / 年度汇总）的渲染都跑在信号槽里 —— 异常抛出去只会打印一段
+        traceback 并留下半张没画完的页面，用户看到的是“页面莫名其妙缺块”。
+        """
+        try:
+            self._clear_layout(layout)
+        except Exception:
+            pass
+        hint = QLabel(f"{page_name}渲染失败：{ex}")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#B54708;background:#FEF4E6;border:1px solid #FEDF89;"
+                           "border-radius:10px;padding:10px 12px;")
+        try:
+            layout.addWidget(hint)
+        except Exception:
+            pass
+        self._set_status(f"{page_name}渲染失败：" + str(ex), False)
 
     def _clear_layout(self, layout):
         # 递归清空：嵌套子布局被 takeAt 摘除后其中的控件会失去布局管理，

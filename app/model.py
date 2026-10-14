@@ -184,6 +184,38 @@ def _safe_float(v, default: float = 0.0) -> float:
         return default
 
 
+def _safe_int(v, default: int = 0) -> int:
+    """把任意值转成 int，失败返回 default（手改过的存档容错）。
+
+    ⚠ ``year`` / ``month`` 如果是字符串（手改 JSON）会让 ``MonthStore.save``
+    的 ``f"{year:04d}"`` 直接 ValueError 崩掉，所以不能原样 setattr。
+    """
+    if isinstance(v, bool):
+        return default
+    try:
+        return int(float(v))          # 同时兼容 "3" 与 "3.0"
+    except Exception:
+        return default
+
+
+def _safe_bool(v, default: bool = False) -> bool:
+    """把任意值转成 bool：只认明确的真 / 假，其余（含字符串 "false"）返回 default。
+
+    ⚠ 不能用 ``bool(v)``：字符串 ``"false"`` 是真值，会把 ``locked`` 变成"已锁定"。
+    """
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        t = v.strip().lower()
+        if t in ("true", "1", "yes", "y", "是"):
+            return True
+        if t in ("false", "0", "no", "n", "", "否"):
+            return False
+    return default
+
+
 @dataclass
 class PayItem:
     """一条工资项。
@@ -238,8 +270,10 @@ class DayEntry:
         """该日是否为自然周的周六 / 周日。
 
         ⚠ 只看自然周，**不查调休表**（调休补班的周六在此仍算「周末」）。
-        唯一使用者是 `calc._count_attendance`（累计 `Counts.weekend`，仅用于报表展示）；
-        三档加班小时由用户手填、不经过这里，故无需处理调休。
+        使用方（均为“仅展示口径”，不影响三档加班工资 —— 那三个小时数由薪酬页手填）：
+        * ``calc._count_attendance``：累计 ``Counts.weekend``（报表行）；
+        * ``pages_calendar``：铺“周末休 / 工作日上班”的默认日历，以及逐日判断。
+        ⇒ 要调休的正确那一天，用 ``holidays.classify_day``（它把 makeup 排在前面）。
         """
         return date(year, month, self.day).weekday() >= 5
 
@@ -259,20 +293,23 @@ def days_in_month(year: int, month: int) -> int:
 
 # days / pay_items 是对象列表，序列化单独处理（不走通用字段循环）
 _MONTHBOOK_SKIP = frozenset({"days", "pay_items"})
-_MONTHBOOK_FLOAT_FIELDS = None  # 首次计算缓存
+_MONTHBOOK_TYPE_FIELDS = None  # (float 字段, int 字段, bool 字段) 首次计算缓存
 
 
-def _float_fields() -> frozenset:
-    """MonthBook 中「声明类型为 float」的字段名集合（排除 days / pay_items），首次调用后缓存。
+def _typed_fields() -> tuple[frozenset, frozenset, frozenset]:
+    """MonthBook 里「声明类型为 float / int / bool」的字段名集合（排除 days / pay_items）。
 
-    `from_dict()` 用它决定哪些字段需要走 `_safe_float` 解析（而不是直接 setattr）。
+    `from_dict()` 用它决定哪些字段需要走 `_safe_float` / `_safe_int` / `_safe_bool`
+    解析，而不是直接把 JSON 里的值 setattr 上去（手改过的存档什么都可能有）。
+    ⚠ 本模块有 ``from __future__ import annotations`` → ``f.type`` 是**字符串**。
     """
-    global _MONTHBOOK_FLOAT_FIELDS
-    if _MONTHBOOK_FLOAT_FIELDS is None:
-        fs = [f.name for f in fields(MonthBook)
-              if f.type in (float, "float") and f.name not in _MONTHBOOK_SKIP]
-        _MONTHBOOK_FLOAT_FIELDS = frozenset(fs)
-    return _MONTHBOOK_FLOAT_FIELDS
+    global _MONTHBOOK_TYPE_FIELDS
+    if _MONTHBOOK_TYPE_FIELDS is None:
+        def _pick(t):
+            return frozenset(f.name for f in fields(MonthBook)
+                             if f.type in (t, t.__name__) and f.name not in _MONTHBOOK_SKIP)
+        _MONTHBOOK_TYPE_FIELDS = (_pick(float), _pick(int), _pick(bool))
+    return _MONTHBOOK_TYPE_FIELDS
 
 
 def create_book(year: int, month: int, note: str = "", *, with_common_pay_items: bool = False) -> "MonthBook":
@@ -361,9 +398,9 @@ class MonthBook:
     @classmethod
     def from_dict(cls, raw: dict) -> "MonthBook":
         b = cls()
-        # 1) 纯字段：float 字段用 _safe_float 解析；
-        #    如果 raw 值本身是非法 / 空 → 保持 dataclass 默认值不动，不清零
-        floats = _float_fields()
+        # 1) 纯字段：按声明类型分别走 _safe_float / _safe_bool / _safe_int；
+        #    值非法 / 空 → 保持 dataclass 默认值不动（不清零、也不把这个值带到内存里）
+        floats, ints, bools = _typed_fields()
         for f in fields(cls):
             name = f.name
             if name in _MONTHBOOK_SKIP or name not in raw:
@@ -378,8 +415,10 @@ class MonthBook:
                     if parsed is None:
                         continue  # 解析失败 → 保持默认
                     setattr(b, name, parsed)
-                elif isinstance(val, bool):
-                    setattr(b, name, bool(val))
+                elif name in bools:
+                    setattr(b, name, _safe_bool(val, bool(getattr(b, name))))
+                elif name in ints:
+                    setattr(b, name, _safe_int(val, int(getattr(b, name))))
                 else:
                     setattr(b, name, val)
             except Exception:

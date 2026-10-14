@@ -21,8 +21,7 @@ class OverviewPageMixin:
         lay = self._overview_lay
         self._clear_layout(lay)
         self.overview_lay = lay
-        # 锁定时只需隐藏/禁用统计卡里的可交互元素 —— 整页本身没有控件。
-        self._overview_cards: list = []
+        # 本页没有可编辑控件：锁定只由其它页的 _set_xxx_locked 处理，这里无需登记。
 
     def _render_overview(self, r):
         if not hasattr(self, "overview_lay"):
@@ -33,7 +32,6 @@ class OverviewPageMixin:
         c = r.counts
         lay = self.overview_lay
         self._clear_layout(lay)
-        self._overview_cards = []
 
         # —— 左列（单列占满）——
         left = QWidget()
@@ -57,7 +55,6 @@ class OverviewPageMixin:
         hb.addWidget(tv)
         hb.addWidget(ts)
         ll.addWidget(hero)
-        self._overview_cards.append(hero)
 
         # 4 个 stat 卡
         stats = QHBoxLayout()
@@ -71,7 +68,6 @@ class OverviewPageMixin:
                             f"{r.total_daily_ot_hours:,.1f}h / {r.daily_leave_hours:,.1f}h"),
         ):
             stats.addWidget(sc)
-            self._overview_cards.append(sc)
         ll.addLayout(stats)
 
         cols = QHBoxLayout()
@@ -87,7 +83,7 @@ class OverviewPageMixin:
         card = Card(title="合规判定", variant="default")
         body = card.body_layout()
 
-        min_ok = r.wage_components_total >= b.min_wage
+        min_ok = r.min_wage_ok   # 判定口径唯一真相在 calc（不要在这里重算）
         wage_detail = (
             f"¥ {r.wage_components_total:,.2f} {'≥' if min_ok else '<'} "
             f"¥ {b.min_wage:,.2f}（月最低工资）"
@@ -132,20 +128,18 @@ class OverviewPageMixin:
             row.addLayout(box)
             row.addStretch(1)
             body.addLayout(row)
-        self._overview_cards.append(card)
         return card
 
     @staticmethod
-    def _stat_card(title, value, hero=False):
-        """小统计块 —— variant=stat（默认）或 hero（用于更显眼的位置）。"""
-        variant = "hero" if hero else "stat"
-        card = Card(title="", variant=variant)
+    def _stat_card(title, value):
+        """小统计块（variant=stat）。"""
+        card = Card(title="", variant="stat")
         card.setMinimumHeight(86)
         body = card.body_layout()
         t = QLabel(title)
-        t.setObjectName("heroTitle" if hero else "statTitle")
+        t.setObjectName("statTitle")
         v = QLabel(value)
-        v.setObjectName("heroValue" if hero else "statValue")
+        v.setObjectName("statValue")
         body.addWidget(t)
         body.addWidget(v)
         body.addStretch(1)
@@ -159,16 +153,16 @@ class OverviewPageMixin:
             v = QLabel("待核算：录入考勤与工资项后显示")
             v.setStyleSheet("color:#667085;font-size:12px;")
             body.addWidget(v)
-            self._overview_cards.append(card)
             return card
-        if getattr(r, 'company_hourly_cost', None) is None:
-            v = QLabel("")
-            v.setStyleSheet("font-weight:700;color:#0F766E;font-size:13px;")
+        if r.company_hourly_cost <= 0:
+            # 成本 = (应发 + 公司社保 + 公司公积金) ÷ (提供正常劳动天数 × 每日工时)；
+            # 分母为 0（没录考勤 / 工时为 0）时 calc 给 0.0 —— 不能显示「¥ 0.00 / h」
+            # （看着像“真的不要钱”），这里明确告知原因。
+            v = QLabel("待录入考勤 / 工时后显示")
+            v.setStyleSheet("font-weight:700;color:#98A2B3;font-size:13px;")
             body.addWidget(v)
-            self._overview_cards.append(card)
             return card
         v = QLabel(f"¥ {r.company_hourly_cost:,.2f} / h  （参考最低 ¥ {self._book.parttime_min:,.2f} / h）")
         v.setStyleSheet("font-weight:700;color:#0F766E;font-size:13px;")
         body.addWidget(v)
-        self._overview_cards.append(card)
         return card

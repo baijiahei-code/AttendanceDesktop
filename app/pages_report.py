@@ -1,13 +1,15 @@
 """报表页渲染：折叠明细组 + 右侧汇总。"""
 from __future__ import annotations
 
+import traceback
+
 from openpyxl import Workbook
 from openpyxl.styles import Alignment
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QVBoxLayout, QWidget, QSizePolicy,
+    QVBoxLayout, QWidget, QSizePolicy,
     QFileDialog, QMessageBox,
 )
 
@@ -30,23 +32,32 @@ class ReportPageMixin:
         page = self.report_page
         if not hasattr(self, "_report_lay"):
             self._report_lay = QVBoxLayout(page)
-            self._report_lay.setContentsMargins(0, 0, 0, 0)
-            self._report_lay.setSpacing(0)
+            # 页面本身已被外层滚动区（main_window._init_page_widgets 的 _scroll_for）包住，
+            # 所以这里直接放内容 —— 以前又套了一层 QScrollArea，结果是双层滚动条
+            # （外层永远不滚、只有内层滚）。
+            self._report_lay.setContentsMargins(20, 14, 20, 18)
+            self._report_lay.setSpacing(10)
         lay = self._report_lay
         self._clear_layout(lay)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        self.report_root = QWidget()
-        scroll.setWidget(self.report_root)
-        self.report_lay = QVBoxLayout(self.report_root)
-        self.report_lay.setContentsMargins(20, 14, 20, 18)
-        self.report_lay.setSpacing(10)
-        lay.addWidget(scroll)
+        self.report_root = page
+        self.report_lay = lay
 
     def _render_report(self, r):
+        """渲染报表页。
+
+        ⚠ 异常兜底：本方法跑在信号槽里，异常抛出去只会打印 traceback 并留下一半没画完的
+        页面；这里转成页内一行提示（其余页面 / 功能照常）。
+        """
         if not hasattr(self, "report_lay"):
             return
+        try:
+            self._render_report_body(r)
+        except Exception as ex:
+            traceback.print_exc()
+            self._clear_layout(self.report_lay)
+            self._render_page_error(self.report_lay, "报表", ex)
+
+    def _render_report_body(self, r):
         c = r.counts
         lay = self.report_lay
         self._clear_layout(lay)
@@ -208,9 +219,9 @@ class ReportPageMixin:
     @staticmethod
     def _line_style(line):
         if line["kind"] == "ok":
-            return "#0B7A3B", True
+            return config.OK_COLOR, True
         if line["kind"] == "bad":
-            return "#C00000", True
+            return config.BAD_COLOR, True
         if line["kind"] == "sec":
             # 组内小标题（比行标签淡一档的灰蓝 + 加粗）
             return _SEC_COLOR, True

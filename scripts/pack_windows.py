@@ -87,8 +87,11 @@ print("\n[2/3] ISCC installer.iss")
 # 用文件重定向读取输出，避免控制台代码页解码崩溃（ISCC 中文输出为 UTF-8）
 out_txt = ROOT / "_iscc_out.tmp"
 err_txt = ROOT / "_iscc_err.tmp"
-r2 = subprocess.run([str(ISCC), str(ISS)], cwd=str(ROOT),
-                    stdout=open(out_txt, "wb"), stderr=open(err_txt, "wb"))
+# ⚠ 句柄必须显式关闭（with）：靠引用计数回收在异常路径 / 其它实现下会漏，
+#    Windows 上还会让随后的 unlink 失败。
+with open(out_txt, "wb") as _fo, open(err_txt, "wb") as _fe:
+    r2 = subprocess.run([str(ISCC), str(ISS)], cwd=str(ROOT),
+                        stdout=_fo, stderr=_fe)
 print(f"  returncode={r2.returncode}")
 if r2.returncode != 0:
     data = err_txt.read_bytes().decode("utf-8", "replace") if err_txt.exists() else ""

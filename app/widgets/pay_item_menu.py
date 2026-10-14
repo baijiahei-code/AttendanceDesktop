@@ -10,7 +10,7 @@
 
 外部只需要：
 * 创建 :class:`PayItemCatalogMenu` 实例
-* 调用 :meth:`popup` 在某个按钮下显示
+* 调 :meth:`popup_for` 在某个按钮下显示（不是 ``QMenu.popup`` —— 那个只接受坐标）
 * 连接 :attr:`item_chosen` 与 :attr:`custom_requested` 信号
 """
 from __future__ import annotations

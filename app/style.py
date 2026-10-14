@@ -46,7 +46,7 @@ QPushButton#ghostInCard:hover { background: rgba(255,255,255,.18); color: #FFFFF
 
 /* ---------- 顶栏 / 月份条 ---------- */
 QFrame#header {
-    background: rgba(255,255,255,0.86); border: none; border-bottom: 1px solid #E6E8F0;
+    background: rgba(255,255,255,0.72); border: none; border-bottom: 1px solid #E6E8F0;
     min-height: 60px;
 }
 QFrame#monthbar { background: transparent; border: none; }
@@ -107,8 +107,6 @@ QFrame#heroCard {
     border: none; border-radius: 16px;
     min-height: 128px;
 }
-QFrame#monthbar { background: transparent; border: none; }
-QFrame#header { background: rgba(255,255,255,0.72); border-bottom: 1px solid #E6E8F0; }
 QLabel#heroTitle { color: rgba(255,255,255,215); font-size: 12px; }
 QLabel#heroValue { color: #FFFFFF; font-size: 24px; font-weight: 800; }
 QFrame#statCard { background: #FFFFFF; border: 1px solid #E6E8F0; border-radius: 16px; }

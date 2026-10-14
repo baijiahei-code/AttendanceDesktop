@@ -8,9 +8,9 @@
 * :data:`TYPE_CHIP`         —— 4 类工资项的 chip 配色（短名 / 前景 / 浅底 / 边框）
 * :data:`PAYITEM_COL_WIDTHS`—— 工资项表格列宽（表头与数据行读同一份，见
   ``widgets/pay_item_list.py`` 与 ``widgets/pay_item_row.py``）
-* :data:`OVERTIME_RATE`     —— 加班三档的**显示文 / 倍率 / 配色**（倍率同时被 ``calc.py``
-  用来算钱，改它金额与文案一起变）
-* :data:`KEY_COLORS`        —— 其他高频键值映射（卡头条等）
+* :data:`OVERTIME_RATE`     —— 加班三档的**显示文 / 配色**（显示文由 :data:`OT_RATE_*`
+  派生，不单独存倍率 —— 倍率的唯一出处是下面那三个常量）
+* :data:`OK_COLOR` / :data:`BAD_COLOR` —— 「合规 / 违规」文本色（UI 与 Excel 共用）
 
 不放在这里的内容：
 * 工资项名称目录（→ model.PAYITEM_CATALOG）
@@ -45,6 +45,8 @@ PAYITEM_COL_WIDTHS: dict[str, int] = {
     "op":   36,   # 操作（删除按钮）
 }
 PAYITEM_ROW_BUTTON_HEIGHT: int = 30   # 行内按钮/chip 高度上限
+# 表头与数据行的左右内边距（像素）—— 必须是**同一个值**，否则列对不齐
+PAYITEM_ROW_PAD_X: int = 10
 
 
 # ─── 加班倍率（三档：显示文 / 倍数 / 配色）───
@@ -57,13 +59,19 @@ PAYITEM_ROW_BUTTON_HEIGHT: int = 30   # 行内按钮/chip 高度上限
 OT_RATE_WORKDAY: float = 1.5
 OT_RATE_RESTDAY: float = 2.0
 OT_RATE_HOLIDAY: float = 3.0
-OVERTIME_RATE: dict[str, tuple[str, float, str, str]] = {
-    # display 由上面的常量**派生** —— 改倍率时徽章文字会自动跟着变（不会一个变一个不变）
-    "workday": (f"×{OT_RATE_WORKDAY:.1f}", OT_RATE_WORKDAY, "#15803D", "#DCFCE7"),  # 工作日 × 1.5
-    "restday": (f"×{OT_RATE_RESTDAY:.1f}", OT_RATE_RESTDAY, "#C2410C", "#FFEDD5"),  # 休息日 × 2
-    "holiday": (f"×{OT_RATE_HOLIDAY:.1f}", OT_RATE_HOLIDAY, "#B91C1C", "#FEE2E2"),  # 法定节假日 × 3
+OVERTIME_RATE: dict[str, tuple[str, str, str]] = {
+    # (徽章文字, 前景色, 底色)；徽章文字由上面的 OT_RATE_* **派生** —— 改倍率时
+    # 徽章文字会自动跟着变（不会一个变一个不变）。
+    # ⚠ 倍率的唯一出处就是 OT_RATE_*（calc 算钱、overtime_rate_text 拼文案都念它）；
+    #    这里不再存一份倍率 —— 存了也会被当成“改了能改钱”的假旋钮。
+    "workday": (f"×{OT_RATE_WORKDAY:.1f}", "#15803D", "#DCFCE7"),  # 工作日 × 1.5
+    "restday": (f"×{OT_RATE_RESTDAY:.1f}", "#C2410C", "#FFEDD5"),  # 休息日 × 2
+    "holiday": (f"×{OT_RATE_HOLIDAY:.1f}", "#B91C1C", "#FEE2E2"),  # 法定节假日 × 3
 }
-OVERTIME_TIPS: str = "时薪 = 加班费基数 ÷（21.75 × 8 = 174 小时）"
+
+# 「合规 / 违规」文本色（单一来源：工作台 / 报表 / 年度汇总的 UI 与 Excel 导出都读这里）
+OK_COLOR: str = "#0B7A3B"
+BAD_COLOR: str = "#C00000"
 
 
 # ─── 顶栏 strip 4 个数值的显示文 ───

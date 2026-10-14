@@ -58,8 +58,9 @@ class SalaryPageMixin:
         self.pay_items = PayItemListWidget()
         self.pay_items.changed.connect(self._pi_touched)
         self.pay_items.copy_requested.connect(self._on_copy_pay_items)
-        self.pay_items.insert_requested_at.connect(
-            lambda _i: self._focus_new_row(self.pay_items))
+        # 信号带的是**新行下标**：工资项按类型分组插入，新行常常不是最后一行，
+        # 丢掉下标去滚 rows[-1] 会滚到无关的行（看不到刚加的输入框）。
+        self.pay_items.insert_requested_at.connect(self._focus_new_row)
         self.pay_items.set_add_callback(self._add_pay_item_at_back_of_type)
         self.pay_items.set_remove_callback(self._on_pay_item_removed)
 
@@ -170,10 +171,22 @@ class SalaryPageMixin:
         self._set_status(f"已添加工资项：{name}（{valid[ptype]}）", True)
         return row
 
-    def _focus_new_row(self, lw):
-        """新行已可见 + 焦点 → 滚到可见区域。"""
-        if lw.rows:
-            lw.ensure_visible_row(lw.rows[-1])
+    def _focus_new_row(self, index: int):
+        """新行已插入 + 已聚焦 → 滚到**那一行**可见。
+
+        ``index`` 来自 :attr:`PayItemListWidget.insert_requested_at`（插入位置），
+        不是“最后一行” —— 按类型分组插入时两者经常不同。
+        """
+        rows = getattr(self.pay_items, "rows", None)
+        if not rows:
+            return
+        try:
+            idx = int(index)
+        except (TypeError, ValueError):
+            idx = len(rows) - 1
+        if idx < 0 or idx >= len(rows):
+            idx = len(rows) - 1
+        self.pay_items.ensure_visible_row(rows[idx])
 
     def _on_pay_item_removed(self, item: "model.PayItem"):
         """删除回调 —— PayItemListWidget 删行后，同步从 book.pay_items 移除。"""
@@ -193,14 +206,6 @@ class SalaryPageMixin:
         self._update_salary_sums()
         self._changed()
         self._sync_salary_strip()
-
-    # _pi_delete / _pi_rename / _pi_amount / _pi_chtype 在 widget 内部直接写回
-    # self.item，并通过信号传到本 mixin 的 _pi_touched。这里保留空方法以维持
-    # 旧名字的兼容（未来若你写自动化测试可能用到）。
-    def _pi_delete(self, *_):       pass  # 兼容：见 PayItemRow.delete_requested
-    def _pi_rename(self, *_):       pass  # 兼容：见 PayItemRow.name_changed
-    def _pi_amount(self, *_):       pass  # 兼容：见 PayItemRow.amount_changed
-    def _pi_chtype(self, *_):       pass  # 兼容：见 PayItemRow.type_changed
 
     # ---------------------------------------------------------------------
     # 加班基数锁 / 自动开关
@@ -301,6 +306,10 @@ class SalaryPageMixin:
         公司/员工约定，不随月份变动）
         """
         if self._book is None:
+            return
+        if getattr(self, "_is_locked", False):
+            # 锁定只读：这条路径会直接写目标月文件（store.save），必须与其它写入入口同口径
+            self._set_status("月份已锁定，无法复制工资项", False)
             return
         src_y, src_m = self._book.year, self._book.month
         dlg = _CopyPayItemsDialog(self, src_y, src_m)

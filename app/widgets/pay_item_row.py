@@ -52,8 +52,8 @@ class PayItemRow(QFrame):
 
         # —— 布局 ──
         hl = QHBoxLayout(self)
-        hl.setContentsMargins(10, config.PAYITEM_ROW_PADDING,
-                                 10, config.PAYITEM_ROW_PADDING)
+        hl.setContentsMargins(config.PAYITEM_ROW_PAD_X, config.PAYITEM_ROW_PADDING,
+                              config.PAYITEM_ROW_PAD_X, config.PAYITEM_ROW_PADDING)
         hl.setSpacing(8)
         widths = config.PAYITEM_COL_WIDTHS
         self._chip.setFixedWidth(widths["type"])
@@ -110,7 +110,7 @@ class PayItemRow(QFrame):
         return sp
 
     def _build_rowsub(self) -> QLabel:
-        lab = QLabel("¥ 0.00")
+        lab = QLabel(config.MONEY_FMT.format(0.0))
         lab.setObjectName("piTotal")
         lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         return lab

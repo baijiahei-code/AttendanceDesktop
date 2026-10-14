@@ -32,7 +32,9 @@ class ParamsPageMixin:
         self._clear_layout(lay)
         # 所有由 Card 承载的卡片（用于统一锁定）
         self._params_cards: list[Card] = []
-        # 模板条 / 非卡片内的「修改类」控件（保留单独列表，因为模板条是 QHBoxBar 不是 Card）
+        # 模板条上的「修改类」控件（combo + 4 个按钮）—— 模板条自己也是 Card
+        # （见下面 tpl.add_layout → 内部控件会被 set_locked 递归禁用），
+        # 这里再列一份是**双保险**，也是给「锁定只读」一个显式清单。
         self._params_extra_modify_widgets: list = []
 
         # —— 🔒 只读模式提示横幅（锁定时才显示）——
@@ -82,8 +84,9 @@ class ParamsPageMixin:
         tpl.add_layout(tpl_inner)
         lay.addWidget(tpl)
         self._refresh_templates()
-        # 模板条的所有"修改类"控件（combo + 4 个按钮）锁定时禁用 —— Card 不追踪，
-        # 因为模板条是横向工具条不是内容卡，由独立列表管理。
+        # 模板条上的「修改类」控件（combo + 4 个按钮）【锁定时禁用】。
+        # ⚠ 它们其实已经被 tpl.add_layout() 追踪（Card 会递归禁用），这里再列一份是双保险，
+        # 不要删 —— 万一将来模板条改成不裹 Card，这里还拦着。
         self._params_extra_modify_widgets.extend([
             self.tpl_combo, save_tpl, rename_tpl, delete_tpl, apply_tpl,
         ])
@@ -163,7 +166,7 @@ class ParamsPageMixin:
                 card.set_locked(locked)
             except Exception:
                 pass
-        # 2) 模板条额外控件（Card 不追踪，由列表兜底）
+        # 2) 模板条额外控件（同上：与 Card 的递归禁用重叠，双保险）
         for w in getattr(self, "_params_extra_modify_widgets", []):
             try:
                 w.setEnabled(not locked)
@@ -272,7 +275,9 @@ class ParamsPageMixin:
         box.setSpacing(3)
         lab_l = QLabel("公积金缴费基数")
         lab_l.setObjectName("fldLabel")
-        fund_spin = NumberSpin(decimals=2, step=100)
+        fund_spin = NumberSpin(decimals=2, step=100, minimum=0.0)
+        # ⚠ minimum=0：不传就是默认的 -1e12，解锁后可以直接填负数 →
+        #   公积金金额算成负数且没有任何提示（同 _add_spin_field 的口径）。
         # 如果被锁定，立即同步当前 min_wage；否则保留 book 里的值
         fund_init = float(getattr(b, "fund_base") or 0.0)
         if self._fund_base_locked and b is not None:
@@ -320,13 +325,18 @@ class ParamsPageMixin:
         card = Card("备注 / 姓名", hint="用于区分历史月份")
         note = QLineEdit(b.note)
         note.setPlaceholderText("例如：张三 · 工资核算")
-        note.textChanged.connect(self._on_note)
+        # textEdited 只在**用户输入**时触发 —— 套用模板回填（setText）不会反向触发保存
+        # （与相关单位页的名称 / 编号框同一口径）
+        note.textEdited.connect(self._on_note)
         card.add_widget(note)
         self._note_edit = note  # 锁定时禁用
         return card
 
     def _make_wage_card(self):
-        """工资与工时标准卡：省份+地区级联，API 可用时自动填最低工资。"""
+        """工资与工时标准卡：省份+地区级联，切省/切区用**内置官方表**自动填最低工资。
+
+        ⚠ 这里**不会**自动联网：取 API 数据必须用户点「🌐 联网查询」（两个来源各自独立）。
+        """
         card = Card("工资与工时标准",
                     hint="选择工作地后自动填入内置官方标准；也可以点「联网查询」用 API 取数"
                          "（两个来源各自独立，不会自动互相替换）")
@@ -449,7 +459,8 @@ class ParamsPageMixin:
         box.setSpacing(3)
         lab_l = QLabel("加班费计算基数")
         lab_l.setObjectName("fldLabel")
-        ot_spin = NumberSpin(decimals=2, step=1)
+        ot_spin = NumberSpin(decimals=2, step=1, minimum=0.0)
+        # ⚠ minimum=0：同公积金基数，负基数会让加班工资变成负数（默认值是 -1e12）。
         ot_init = float(getattr(self._book, "overtime_base") or 0.0)
         # 锁态初始化：如果已有有效值 min_wage，则立即跟随
         if self._ot_base_locked and self._book is not None:
@@ -808,6 +819,12 @@ class ParamsPageMixin:
             self._set_status(
                 f"{year}-{month:02d} 的最低工资已取回，但当前月份已切换，结果未套用", False)
             return
+        # 等待期间用户锁定了本月：写入只停在内存、_changed 被 _is_locked 拦下不会落盘
+        # → 界面看着变了、文件里没有（切月回来就"消失"），所以直接丢弃。
+        if getattr(self, "_is_locked", False):
+            self._set_status(
+                f"{year}-{month:02d} 的最低工资已取回，但本月已锁定，结果未套用", False)
+            return
         if data is None:
             self._set_status(f"联网查询 {province} · {region} 未返回数据", False)
             return
@@ -1012,20 +1029,30 @@ class ParamsPageMixin:
         for t in self._load_templates():
             if (t.get("name") or "") == name:
                 p = t.get("params") or {}
+                # try/finally：中途万一抛异常，_loading 也必须复位 ——
+                # 否则它会永久为 True，之后所有 _changed() / 校验都静默失效（"软件不再保存"）。
                 self._loading = True
-                if hasattr(self, "_param_spins"):
-                    for attr, spin in self._param_spins.items():
-                        if attr in p:
-                            try:
-                                v = float(p[attr])
-                            except Exception:
-                                v = spin.value()
-                            spin.setValue(v)
-                            setattr(self._book, attr, v)
-                if "note" in p:
-                    self._book.note = str(p.get("note") or "")
+                try:
+                    if hasattr(self, "_param_spins"):
+                        for attr, spin in self._param_spins.items():
+                            if attr in p:
+                                try:
+                                    v = float(p[attr])
+                                except Exception:
+                                    v = spin.value()
+                                spin.setValue(v)
+                                setattr(self._book, attr, v)
+                    if "note" in p:
+                        note_text = str(p.get("note") or "")
+                        self._book.note = note_text
+                        # 备注框必须一起回填：否则界面还是旧文字，用户再敲一个字符
+                        # 就会把模板里的备注整段顶掉（_on_note 写的是整个 text）。
+                        # _loading 期间 setText 不会反向触发 _on_note。
+                        if hasattr(self, "_note_edit"):
+                            self._note_edit.setText(note_text)
+                finally:
+                    self._loading = False
                 # 模板里可能残留旧版本的 "units" 键 —— 直接忽略（相关单位不归模板管）
-                self._loading = False
                 self._changed()
                 self._set_status(f"已套用模板：{name}", True)
                 return

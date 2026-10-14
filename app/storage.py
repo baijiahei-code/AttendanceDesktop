@@ -207,7 +207,13 @@ class MonthStore:
         return os.path.join(self.dir, "settings.json")
 
     def load_settings(self) -> dict:
-        """读取应用设置（带缓存；返回副本，调用方可自由修改后自行保存）。"""
+        """读取应用设置（带缓存；返回副本，调用方可自由修改后自行保存）。
+
+        ⚠ 解析失败**不静默当成空设置**：记 :attr:`last_error` + 打印 traceback +
+        尝试从 ``settings.json.bak`` 恢复。静默返回 ``{}`` 很危险 —— 后续任何一次保存
+        （改相关单位 / 单位表锁）都会以空字典为基底**整文件覆写**，把 api_url /
+        api_key / province 等设置永久抹掉（月份存档好歹还有 .bak）。
+        """
         path = self._settings_path()
         try:
             st = os.stat(path)
@@ -218,13 +224,17 @@ class MonthStore:
             return {}
         if self._settings_cache is not None and stamp == self._settings_stamp:
             return dict(self._settings_cache)
+        data: dict | None = None
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-        except Exception:
-            data = {}
-        if not isinstance(data, dict):
-            data = {}
+            if not isinstance(data, dict):
+                data = None
+        except Exception as ex:
+            self.last_error = str(ex)
+            traceback.print_exc()
+        if data is None:
+            data = self._recover_settings()   # 尝试 .bak；实在不行才给 {}
         # 透明解密敏感字段（dpapi: / gm1: / 旧版明文 三种形态都兼容）
         for k in _SENSITIVE_KEYS:
             if k in data:
@@ -232,8 +242,27 @@ class MonthStore:
         self._settings_cache, self._settings_stamp = data, stamp
         return dict(data)
 
+    def _recover_settings(self) -> dict:
+        """``settings.json`` 损坏时的兜底：从 ``settings.json.bak`` 读回（没有就 ``{}``）。
+
+        ⚠ 只在主文件解析失败时调用 —— 返回的内容会被下一次保存**原样写回**主文件。
+        """
+        try:
+            with open(self._settings_path() + ".bak", "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                self.last_error = (self.last_error or "设置文件损坏") + "（已从 .bak 恢复）"
+                return data
+        except Exception:
+            pass
+        return {}
+
     def save_settings(self, data: dict) -> bool:
-        """保存应用设置：敏感字段透明加密后落盘，并同步缓存失效戳。
+        """保存应用设置：敏感字段透明加密后**原子**落盘，并同步缓存失效戳。
+
+        写法与月份存档 :meth:`save` 一致（``.tmp`` → 备份 ``.bak`` → ``os.replace``）：
+        直接截断覆写时若中途崩溃，会留下半个文件，下次启动读到非法 JSON
+        → 设置（含 API Key）整体丢失。
 
         :return: 是否写入成功（异常就地吞掉并打印 traceback）。
         """
@@ -243,14 +272,33 @@ class MonthStore:
             # 透明加密敏感字段，避免明文落盘
             safe = dict(data)
             for k in _SENSITIVE_KEYS:
-                if k in safe and safe[k]:
-                    safe[k] = crypto.protect(safe[k], self.key_dir)
+                v = safe.get(k)
+                if not v:
+                    continue
+                # ⚠ 解不开的令牌（crypto.unprotect 失败会原样返回）不能再包一层，
+                #   否则每次保存都套娃、用户永远拿不回原值（换机器/丢密钥后的坏数据）。
+                if isinstance(v, str) and v.startswith((crypto.TOKEN_DPAPI, crypto.TOKEN_GM)):
+                    continue
+                safe[k] = crypto.protect(v, self.key_dir)
             path = self._settings_path()
-            with open(path, "w", encoding="utf-8") as f:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(safe, f, ensure_ascii=False, indent=2)
+            secure_path(tmp, _FILE_MODE)
+            if os.path.exists(path):
+                bak = path + ".bak"
+                try:
+                    if os.path.exists(bak):
+                        os.remove(bak)
+                    shutil.copyfile(path, bak)
+                    secure_path(bak, _FILE_MODE)
+                except Exception:
+                    pass
+            os.replace(tmp, path)   # 原子覆盖，避免“截断后崩了就没了一半”
             secure_path(path, _FILE_MODE)
             # 同步缓存：避免紧接着的读取再次解密，也让连续保存的中间态一致
             self._settings_cache = dict(data)
+            self.last_error = None
             try:
                 st = os.stat(path)
                 self._settings_stamp = (st.st_mtime, st.st_size)
@@ -268,6 +316,8 @@ class MonthStore:
     # **不读也不写月度存档**（老存档里残留的 units 键直接忽略）。
 
     UNITS_KEY = "units"
+    # 「单位登记表自己的锁」也存这里（与月份无关；重启软件后保持）
+    UNITS_LOCKED_KEY = "units_locked"
 
     def load_units(self) -> list[model.RelatedUnit]:
         """读取全局相关单位（每次返回**新建的**对象，调用方可自由修改后自行 save_units）。
@@ -285,4 +335,20 @@ class MonthStore:
         """把全局相关单位写进 settings.json（其它设置原样保留）。"""
         settings = self.load_settings()
         settings[self.UNITS_KEY] = [u.to_dict() for u in units]
+        return self.save_settings(settings)
+
+    def load_units_locked(self) -> bool:
+        """读取「单位登记表自己的锁」是否锁上（与月份无关，存在 settings.json）。
+
+        没这个键（从未锁过 / 老版本存档）→ ``False``（默认不锁）。
+        """
+        return bool(self.load_settings().get(self.UNITS_LOCKED_KEY, False))
+
+    def save_units_locked(self, locked: bool) -> bool:
+        """把「单位登记表自己的锁」写进 settings.json（其它设置原样保留）。
+
+        ⚠ 存的是**布尔**（不是加密字段），重启软件后锁态仍在。
+        """
+        settings = self.load_settings()
+        settings[self.UNITS_LOCKED_KEY] = bool(locked)
         return self.save_settings(settings)

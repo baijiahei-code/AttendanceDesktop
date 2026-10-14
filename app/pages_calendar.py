@@ -51,7 +51,8 @@ class CalendarPageMixin:
         api_fill_btn.setToolTip(
             "只调用你在「⚙️ API 设置」里配的 API 获取某年节假日/调休安排"
             "（失败会直接提示原因，不会改用内置表）；\n"
-            "只铺设周末、法定节假日、调休三类日期，其余日期保持不变。")
+            "按官方安排**覆盖**周末、法定节假日、调休三类日期的状态，并把「法定节假日」"
+            "标记整月重写（只有法定日为 1）；其余日期的状态不动。")
         api_fill_btn.setStyleSheet(
             "QPushButton{background:#ECFDF5;color:#065F46;border:1px solid #A7F3D0;"
             "border-radius:9px;padding:5px 10px;font-weight:600;}"
@@ -61,7 +62,8 @@ class CalendarPageMixin:
         local_holiday_btn = QPushButton("📋 铺本地表（法定节假日/调休）")
         local_holiday_btn.setToolTip(
             "用软件内置的国务院节假日/调休安排铺设（不联网）；\n"
-            "只铺设周末、法定节假日、调休三类日期，其余日期保持不变。")
+            "按官方安排**覆盖**周末、法定节假日、调休三类日期的状态，并把「法定节假日」"
+            "标记整月重写（只有法定日为 1）；其余日期的状态不动。")
         local_holiday_btn.setStyleSheet(
             "QPushButton{background:#F5F3FF;color:#5B21B6;border:1px solid #DDD6FE;"
             "border-radius:9px;padding:5px 10px;font-weight:600;}"
@@ -252,8 +254,14 @@ class CalendarPageMixin:
             for bt in self._day_btns.values():
                 bt.deleteLater()
         self._day_btns = {}
+        # ⚠ takeAt 只把布局项摘掉，widget 仍是卡片的子控件（不会自己释放）——
+        #   星期表头每次重绘都要 deleteLater，否则越积越多（同 _clear_layout 的理由）。
         while grid.count():
-            grid.takeAt(0)
+            item = grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
         for i, wn in enumerate(["一", "二", "三", "四", "五", "六", "日"]):
             lab = QLabel(wn)
             lab.setAlignment(Qt.AlignCenter)
@@ -484,12 +492,25 @@ class CalendarPageMixin:
         self._set_api_fill_busy(False)
 
     def _apply_holidays(self, y: int, m: int, data: dict | None):
-        """后台取回节假日后在主线程铺设（含月份切换保护）。"""
+        """后台取回节假日后在主线程铺设（含月份切换保护）。
+
+        ⚠ **铺设是「覆盖」**：
+        * **状态**：落在铺设范围内的三类日期（法定 / 放假调休 / 补班）+ 普通周末会被重写；
+          范围之外的日期状态不动（保留用户手填的请假 / 缺勤等）。
+        * **「法定节假日」标记**：整月按本次数据重写 —— 只有法定日 `mark=1`，**其余全部清 0**。
+          否则一旦被错误数据（旧版 API 实测把 2025 春节当成 2026 的）标过 `mark=1`，
+          之后拿**正确**数据重铺也洗不掉，`calc` 的「法定节假日」天数与报表会一直错。
+        """
         if self._book is None:
             return
         if (self._book.year, self._book.month) != (y, m):
             self._set_status(
                 f"{y} 年节假日已取回，但当前月份已切换，结果未铺设", False)
+            return
+        # 等待期间用户锁定了本月 → 下面会改 day.status / day.mark 但 _changed 被拦下
+        # 不落盘（界面看着变了、文件里没有），所以直接丢弃。
+        if getattr(self, "_is_locked", False):
+            self._set_status(f"{y} 年节假日已取回，但本月已锁定，结果未铺设", False)
             return
         if data is None:
             self._set_status(f"{y} 年节假日数据未找到，无法铺设", False)
@@ -510,7 +531,8 @@ class CalendarPageMixin:
             old_status = d.status
             old_mark = d.mark
             new_status = None
-            new_mark = d.mark
+            # 「法定节假日」标记由本次铺设**整月重写**（只有法定日 1，其余一律 0）
+            new_mark = 0
             # 归类只调 holidays.classify_day（与内置官方表同一条优先级）
             kind = holidays.classify_day(key, statutory=statutory, rest=rest,
                                         makeup=makeup)
@@ -527,8 +549,10 @@ class CalendarPageMixin:
             elif is_weekend:
                 # 普通周末：休息
                 new_status = "休息"
-            if new_status is not None and (old_status != new_status or old_mark != new_mark):
-                d.status = new_status
+            # 状态只覆盖「铺设范围内的三类日期 + 周末」；标记则整月重写
+            if old_mark != new_mark or (new_status is not None and old_status != new_status):
+                if new_status is not None:
+                    d.status = new_status
                 d.mark = new_mark
                 changed_count += 1
         self._render_calendar()
@@ -581,6 +605,7 @@ class CalendarPageMixin:
                 if act is chosen:
                     ent.status = s
                     break
+        menu.deleteLater()   # 菜单以窗口为父对象常驻 → 用完立即销毁（每次右键都新建）
         self._after_day_change(day)
         self._select_day(day)
 

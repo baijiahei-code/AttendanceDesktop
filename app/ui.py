@@ -62,7 +62,7 @@ PAGE_TITLES = {
     "salary": ("薪酬构成", "工资项可增删；补贴只需一条，按出勤自动折算"),
     "params": ("参数", "社保公积金基数 / 比例与各项标准，可存为模板"),
     "report": ("报表", "应发、扣除、实发与合规判定明细"),
-    "annual": ("年度汇总", "全年 12 个月考勤与工资一览，可打印"),
+    "annual": ("年度汇总", "全年 12 个月考勤与工资一览，可导出 Excel"),
 }
 
 # 考勤状态 → (底色, 前景色)，与设计令牌一致
@@ -194,7 +194,8 @@ class ResponsiveColumns(QWidget):
 def make_lock_banner(text: str | None = None, parent=None) -> QLabel:
     """只读提示横幅（默认文案是「整月锁定」，可传自定义文案），默认隐藏。
 
-    「相关单位」页会按只读原因切换文案（整月锁定 / 它自己的锁，见 pages_units）。
+    传了自定义文案的页面（目前只有「相关单位」，见 ``pages_units``）文案**恒定**，
+    只切显隐：它不归月份锁管，只有自己那把锁（该页的 🔒）。
     """
     lab = QLabel(text or LOCK_BANNER_TEXT, parent)
     lab.setStyleSheet(

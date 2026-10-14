@@ -182,7 +182,7 @@ cp -a $pkgroot/. %{buildroot}/
 /usr/bin/$pkg
 $lib_dir
 /usr/share/applications/$pkg.desktop
-/usr/share/icons/hicolor/256x256/apps/$pkg.png
+$icon_line
 %license /usr/share/licenses/$pkg/COPYING
 
 %changelog
@@ -281,6 +281,10 @@ def build_spec(version: str, arch: str, pkgroot: Path) -> Path:
         requires=", ".join(rpm_requires()),
         recommends=", ".join(rpm_recommends()),
         lib_dir=LIB_DIR,
+        # ⚠ %files 里的行**必须真实存在**，否则 rpmbuild 直接报
+        #   "File not found" 打包失败（deb 侧只是警告一下）。图标拷不进去时这里留空。
+        icon_line=(f"/usr/share/icons/hicolor/256x256/apps/{PKG}.png"
+                   if (ROOT / "app" / "icon.png").exists() else ""),
         pkgroot=pkgroot,
         changelog=f"* {changelog_date} {MAINTAINER} - {version}-{RPM_RELEASE}\n"
                   f"- 首个 RPM（rpm 系信创）版本，与 deb 同源代码与运行时",

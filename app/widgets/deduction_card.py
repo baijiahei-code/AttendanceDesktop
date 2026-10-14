@@ -66,7 +66,7 @@ class DeductionCardWidget(QFrame):
         self._spin(cl, "大病医疗补助（元）", "big_disease")
         self._spin(cl, "个人所得税（元）", "income_tax")
 
-        self._total = QLabel("个人扣除合计 - ¥ 0.00")
+        self._total = QLabel("个人扣除合计 - " + config.MONEY_FMT.format(0.0))
         self._total.setObjectName("piTotal")
         cl.addWidget(self._total)
 
@@ -113,7 +113,7 @@ class DeductionCardWidget(QFrame):
                 f"{config.MONEY_FMT.format(r.personal_fund)}"
                 f"（{b.personal_fund_rate:g} × {b.fund_base:,.0f}）")
         self._total.setText(
-            f"个人扣除合计 - ¥ {r.personal_deductions_total:,.2f}")
+            "个人扣除合计 - " + config.MONEY_FMT.format(r.personal_deductions_total))
 
         # 自动个税回写到所得税 spin
         if b is not None and getattr(b, "income_tax_auto", False):
