@@ -34,7 +34,11 @@ class AnnualPageMixin:
         self._fill_annual()
 
     def _annual_rows(self, year: int):
-        """读取全年 12 个月并核算。返回 (行数据, 合计)；缺失月份各项为 None。"""
+        """读取全年 12 个月并核算。返回 (行数据, 合计)；缺失月份各项为 None。
+
+        行数据 = ``(月份, 8 项数值列表, work_time_legal 布尔)`` —— 第三项是
+        **布尔**（不是「违法 / 不违法」文案）：画表与导出的「合规 / 违法」都由它决定。
+        """
         rows = []
         totals = [0.0] * (len(_COLS) - 2)  # 出勤..公司成本
         for m in range(1, 13):
@@ -46,7 +50,7 @@ class AnnualPageMixin:
             vals = [float(r.counts.work), r.total_daily_ot_hours, r.daily_leave_hours,
                     r.gross_wage, r.personal_deductions_total, r.leave_deduction_total,
                     r.take_home, r.gross_wage + r.company_social + r.company_fund]
-            rows.append((m, vals, r.work_time_legality))
+            rows.append((m, vals, r.work_time_legal))
             for i, v in enumerate(vals):
                 totals[i] += v
         return rows, totals
@@ -112,15 +116,15 @@ class AnnualPageMixin:
                     self._annual_cell(table, row, c, "—", dim=True)
                 self._annual_cell(table, row, len(_COLS) - 1, "—", dim=True, center=True)
                 continue
-            _, vals, legal = data
+            _, vals, legal_ok = data
             texts = [f"{vals[0]:g}", f"{vals[1]:.1f}", f"{vals[2]:.1f}",
                      f"{vals[3]:,.2f}", f"{vals[4]:,.2f}", f"{vals[5]:,.2f}",
                      f"{vals[6]:,.2f}", f"{vals[7]:,.2f}"]
             for c, t in enumerate(texts, start=1):
                 self._annual_cell(table, row, c, t)
-            ok = "不违法" in legal
-            self._annual_cell(table, row, len(_COLS) - 1, "合规" if ok else "违法",
-                              color=("#0B7A3B" if ok else "#C00000"), bold=True, center=True)
+            self._annual_cell(table, row, len(_COLS) - 1,
+                              "合规" if legal_ok else "违法",
+                              color=("#0B7A3B" if legal_ok else "#C00000"), bold=True, center=True)
 
         # 合计行
         last = 12
@@ -227,7 +231,7 @@ def _write_annual_xlsx(path: str, year: int, rows, totals):
             _put_text(r, n_cols, "—")
             continue
 
-        _, vals, legal = data
+        _, vals, legal_ok = data
         # B 出勤(天) int；C/D 加班/请假 小时 flt；E..I 金额
         _put(r, 2, vals[0], kind="int")
         _put(r, 3, vals[1], kind="flt")
@@ -237,10 +241,9 @@ def _write_annual_xlsx(path: str, year: int, rows, totals):
         _put(r, 7, vals[5], kind="money")
         _put(r, 8, vals[6], kind="money")
         _put(r, 9, vals[7], kind="money")
-        # J 工时合规
-        ok = "不违法" in legal
-        text = "合规" if ok else "违法"
-        _put_text(r, n_cols, text, font=OK_FONT if ok else BAD_FONT,
+        # J 工时合规（布尔来自 calc.Result.work_time_legal，不再拿文案做子串匹配）
+        text = "合规" if legal_ok else "违法"
+        _put_text(r, n_cols, text, font=OK_FONT if legal_ok else BAD_FONT,
                   align="center")
         ws.row_dimensions[r].height = 20
 

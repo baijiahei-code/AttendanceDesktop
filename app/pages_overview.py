@@ -109,7 +109,7 @@ class OverviewPageMixin:
 
         items = [
             (min_ok, "计入最低工资标准的工资", wage_detail),
-            (r.work_time_legality == "不违法", "工时与加班合规", work_time_detail),
+            (r.work_time_legal, "工时与加班合规", work_time_detail),
         ]
         for ok, title, detail in items:
             row = QHBoxLayout()

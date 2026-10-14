@@ -5,13 +5,13 @@
 * 固定加班工资 spin
 * 三档小时数 spin（各带倍率徽章）
 * 加班费基数 spin + 锁按钮
-* 三档金额 + 加班小计（= 固定加班工资 + 三档加班工资）
+* 三档金额 + 加班工资合计（= 固定加班工资 + 三档加班工资）
 
 公开 attrs：
 * :attr:`spins`：所有 NumberSpin 的字典（外部按 attr 读写 book）
-* :attr:`total`：加班工资小计的 QLabel（= 固定加班工资 + 三档加班工资）
+* :attr:`total`：加班工资合计的 QLabel（= 固定加班工资 + 三档加班工资）
 * :attr:`lock_btn`：加班费基数锁按钮（外部监听点击）
-* :meth:`sync(r, book)`：根据 calc 结果刷新三档金额与加班小计
+* :meth:`sync(r, book)`：根据 calc 结果刷新三档金额与加班工资合计
 
 注：三档各自的「金额」标签是局部变量（建布局时顺手加进去，没存成属性），
 外部要刷新只能调 ``sync()``。
@@ -41,7 +41,11 @@ class OvertimeCardWidget(QFrame):
         title = QLabel(config.OT_CARD_TITLE)
         title.setObjectName("cardTitle")
         cl.addWidget(title)
-        hint = QLabel(config.OVERTIME_TIPS + "；工作日 ×1.5 · 休息日 ×2 · 法定节假日 ×3")
+        # 倍率从 config.OT_RATE_* 取数（与徽章、calc 算钱同源），文字保持原有的「×2 / ×3」写法
+        hint = QLabel(config.OVERTIME_TIPS + "；"
+                      f"工作日 ×{config.OT_RATE_WORKDAY:g} · "
+                      f"休息日 ×{config.OT_RATE_RESTDAY:g} · "
+                      f"法定节假日 ×{config.OT_RATE_HOLIDAY:g}")
         hint.setObjectName("secHint")
         hint.setWordWrap(True)
         cl.addWidget(hint)
@@ -87,10 +91,10 @@ class OvertimeCardWidget(QFrame):
         ob_hint.setWordWrap(True)
         cl.addWidget(ob_hint)
 
-        # —— 加班小计（含固定加班工资）──
-        self._total = QLabel("加班工资小计 ¥ 0.00")
+        # —— 加班工资合计（含固定加班工资）──
+        self._total = QLabel("加班工资合计 ¥ 0.00")
         self._total.setObjectName("piTotal")
-        self._total.setToolTip("加班工资小计 = 固定加班工资 + 工作日/休息日/法定节假日加班工资")
+        self._total.setToolTip("加班工资合计 = 固定加班工资 + 工作日/休息日/法定节假日加班工资")
         cl.addWidget(self._total)
 
     # ---------------------------------------------------------------------
@@ -141,10 +145,10 @@ class OvertimeCardWidget(QFrame):
         return self._lock_btn
 
     def sync(self, r, b: model.MonthBook | None = None):
-        """根据结果刷新三档金额与加班小计。
+        """根据结果刷新三档金额与加班工资合计。
 
-        小计 = **固定加班工资 + 三档加班工资**（与报表「工资核算（应发）」的四行
-        同口径）。注意 ``r.overtime_wage_total`` 只含三档（calc 里它是应发工资
+        合计 = **固定加班工资 + 三档加班工资**（与报表「工资核算（应发）」的「加班工资
+        合计」同口径）。注意 ``r.overtime_wage_total`` 只含三档（calc 里它是应发工资
         的构成项之一，固定加班工资由 calc 单独累加，不能并进去，否则重复计），
         所以固定部分在这里由 book 补上。
         """
@@ -158,4 +162,4 @@ class OvertimeCardWidget(QFrame):
             config.MONEY_FMT.format(r.overtime_wage_holiday))
         fixed = float(getattr(b, "fixed_overtime_wage", 0.0) or 0.0) if b is not None else 0.0
         self._total.setText(
-            f"加班工资小计 ¥ {r.overtime_wage_total + fixed:,.2f}")
+            f"加班工资合计 ¥ {r.overtime_wage_total + fixed:,.2f}")

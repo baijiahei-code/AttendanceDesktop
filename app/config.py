@@ -8,7 +8,8 @@
 * :data:`TYPE_CHIP`         —— 4 类工资项的 chip 配色（短名 / 前景 / 浅底 / 边框）
 * :data:`PAYITEM_COL_WIDTHS`—— 工资项表格列宽（表头与数据行读同一份，见
   ``widgets/pay_item_list.py`` 与 ``widgets/pay_item_row.py``）
-* :data:`OVERTIME_RATE`     —— 加班三档的**显示文与配色**（计算倍率在 ``calc.py``）
+* :data:`OVERTIME_RATE`     —— 加班三档的**显示文 / 倍率 / 配色**（倍率同时被 ``calc.py``
+  用来算钱，改它金额与文案一起变）
 * :data:`KEY_COLORS`        —— 其他高频键值映射（卡头条等）
 
 不放在这里的内容：
@@ -50,13 +51,17 @@ PAYITEM_ROW_BUTTON_HEIGHT: int = 30   # 行内按钮/chip 高度上限
 # 想加一档「×4 病假」？复制一行就 OK。
 #   key     ：model / calc 中的小时字段后缀
 #   display ：卡片里展示的徽章文字
-#   multiplier：**仅供显示与文档**（真正的计算写死在 calc.py 的
-#              overtime_wage_* 三行里；改这里的倍数不会改金额）
+#   OT_RATE_*：三档倍率的**唯一出处** —— ``calc.compute`` 用它算三档加班工资，
+#             ``calc.overtime_rate_text`` 用它拼报表文案，改这里金额与文案同步变
 #   fg / bg ：徽章前景与底色
+OT_RATE_WORKDAY: float = 1.5
+OT_RATE_RESTDAY: float = 2.0
+OT_RATE_HOLIDAY: float = 3.0
 OVERTIME_RATE: dict[str, tuple[str, float, str, str]] = {
-    "workday": ("×1.5", 1.5, "#15803D", "#DCFCE7"),  # 工作日 × 1.5
-    "restday": ("×2.0", 2.0, "#C2410C", "#FFEDD5"),  # 休息日 × 2
-    "holiday": ("×3.0", 3.0, "#B91C1C", "#FEE2E2"),  # 法定节假日 × 3
+    # display 由上面的常量**派生** —— 改倍率时徽章文字会自动跟着变（不会一个变一个不变）
+    "workday": (f"×{OT_RATE_WORKDAY:.1f}", OT_RATE_WORKDAY, "#15803D", "#DCFCE7"),  # 工作日 × 1.5
+    "restday": (f"×{OT_RATE_RESTDAY:.1f}", OT_RATE_RESTDAY, "#C2410C", "#FFEDD5"),  # 休息日 × 2
+    "holiday": (f"×{OT_RATE_HOLIDAY:.1f}", OT_RATE_HOLIDAY, "#B91C1C", "#FEE2E2"),  # 法定节假日 × 3
 }
 OVERTIME_TIPS: str = "时薪 = 加班费基数 ÷（21.75 × 8 = 174 小时）"
 

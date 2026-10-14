@@ -21,11 +21,13 @@ _SECTION_INDIGO_BG = "EEF2FF"
 _OK_GREEN_BG = "ECFDF3"
 _BAD_RED_BG = "FEF2F2"
 _GROUP_GRAY_BG = "F1F2F7"
+_SUB_GRAY_BG = "F9FAFB"
 
 # ====== Fill（背景色）======
 HEADER_FILL = PatternFill("solid", fgColor=_BRAND_INDIGO)
 SECTION_FILL = PatternFill("solid", fgColor=_SECTION_INDIGO_BG)  # 区域标题（淡靛紫）
 GROUP_FILL = PatternFill("solid", fgColor=_GROUP_GRAY_BG)        # 明细分组小标题
+SUB_FILL = PatternFill("solid", fgColor=_SUB_GRAY_BG)            # 组内小标题（比分组灰底更浅）
 OK_FILL = PatternFill("solid", fgColor=_OK_GREEN_BG)             # 合规：极淡绿
 BAD_FILL = PatternFill("solid", fgColor=_BAD_RED_BG)             # 违规：极淡红
 

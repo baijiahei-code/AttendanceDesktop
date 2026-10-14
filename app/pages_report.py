@@ -12,13 +12,17 @@ from PySide6.QtWidgets import (
 )
 
 # 公共 Excel 样式（颜色/字体/边框/数字格式）—— 改色只需改 app/excel_style.py
+from . import calc, config
 from .excel_style import (
     BOLD_FONT, BODY_FONT, BAD_FONT, OK_FONT, INFO_FONT,
-    TITLE_FONT, SECTION_FILL, GROUP_FILL,
+    TITLE_FONT, SECTION_FILL, GROUP_FILL, SUB_FILL,
     OK_FILL, BAD_FILL, MONEY_FMT, INT_FMT, FLT_FMT,
 )
 from .ui import default_export_path
 from .widgets import Card
+
+# 组内小标题（行 `kind="sec"`）的灰蓝色：左侧标签与右侧样式共用一处，避免两处各写一份色值
+_SEC_COLOR = "#7C8AA5"
 
 
 class ReportPageMixin:
@@ -97,7 +101,12 @@ class ReportPageMixin:
         bl.setVerticalSpacing(4)
         for row, line in enumerate(g["lines"]):
             lab = QLabel(line["label"])
-            lab.setStyleSheet("color:#475569;")
+            # 说明性标签可能较长（如「不计入工资扣除部分/已经扣除部分」），
+            # 允许换行，避免把左侧分组卡撑宽或与右侧数值挤在一起
+            lab.setWordWrap(True)
+            # 组内小标题（kind="sec"）：标签本身也换成淡灰蓝加粗，与普通行标签区分
+            lab.setStyleSheet(f"color:{_SEC_COLOR};font-weight:700;"
+                              if line["kind"] == "sec" else "color:#475569;")
             vl2 = QLabel(self._fmt_line(line))
             color, bold = self._line_style(line)
             vl2.setStyleSheet(f"color:{color};font-weight:{'700' if bold else '400'};")
@@ -164,8 +173,10 @@ class ReportPageMixin:
         row("到手小时工资", f"¥ {r.take_home_hourly:,.2f} / h", "#0F172A")
         row("提供正常劳动", f"{c.normal_labor_days} 天", "#0F172A")
         row("公司总成本", f"¥ {r.gross_wage + r.company_social + r.company_fund:,.2f}", "#0F172A")
-        tip = QLabel("工作日加班 ×1.5 · 休息日 ×2 · 法定节假日 ×3 · "
-                     "请假按（应发−个人扣除）÷ 约定工作天数计日扣款")
+        tip = QLabel(f"工作日加班 ×{config.OT_RATE_WORKDAY:g} · 休息日 ×{config.OT_RATE_RESTDAY:g} · "
+                     f"法定节假日 ×{config.OT_RATE_HOLIDAY:g} · "
+                     "请假 / 缺勤扣款：先按「(应发工资 − 个人扣除) ÷ 约定工作天数」算出"
+                     "「请假一天扣除的工资」，缺勤按天扣、请假不足一天按小时（再 ÷ 8）扣")
         tip.setWordWrap(True)
         tip.setStyleSheet("color:#98A2B3;font-size:11px;margin-top:6px;")
         sl.addWidget(tip)
@@ -200,12 +211,15 @@ class ReportPageMixin:
             return "#0B7A3B", True
         if line["kind"] == "bad":
             return "#C00000", True
+        if line["kind"] == "sec":
+            # 组内小标题（比行标签淡一档的灰蓝 + 加粗）
+            return _SEC_COLOR, True
         if line["bold"]:
             return "#1D4ED8", True
         return "#0F172A", False
 
     def _export_report_xlsx(self):
-        """把当前月份报表写到 .xlsx，多 sheet：摘要 / 明细 / 合规。"""
+        """把当前月份报表写到 .xlsx（单个 sheet，纵向排版：标题 / 汇总 / 明细分组 / 合规判定）。"""
         if self._last_result is None or self._book is None:
             return
         b = self._book
@@ -246,7 +260,9 @@ def _write_report_xlsx(path: str, r, b):
         """通用两列或三列行：A 标签 / B 数值 / C 单位。"""
         a = ws.cell(row=row, column=1, value=label)
         a.font = INFO_FONT
-        a.alignment = Alignment(horizontal="right", vertical="center", indent=1)
+        # 标签常带说明（括号内容），允许换行，行高由 Excel 自适应
+        a.alignment = Alignment(horizontal="right", vertical="center",
+                                indent=1, wrap_text=True)
         b_cell = ws.cell(row=row, column=2, value=value)
         b_cell.font = font or BODY_FONT
         b_cell.alignment = Alignment(horizontal=align_value, vertical="center", indent=1)
@@ -310,7 +326,16 @@ def _write_report_xlsx(path: str, r, b):
             label = line["label"]
             kind = line["kind"]
             bold = line["bold"]
-            if line["text"] is not None:
+            if kind == "sec":
+                # 组内小标题：合并 A:C + 浅灰底（比分组灰底更浅一档）
+                ws.merge_cells(start_row=cur, start_column=1,
+                               end_row=cur, end_column=NCOL)
+                sc = ws.cell(row=cur, column=1, value="  " + label)
+                sc.font = BOLD_FONT
+                sc.fill = SUB_FILL
+                sc.alignment = Alignment(horizontal="left", vertical="center",
+                                         indent=1)
+            elif line["text"] is not None:
                 write_kv(cur, label, line["text"],
                          font=(OK_FONT if kind == "ok" else
                                BAD_FONT if kind == "bad" else
@@ -370,28 +395,29 @@ def _write_report_xlsx(path: str, r, b):
 
     emit("最低工资标准",
          r.min_wage_status,
-         ("计入部分 ≥ 地方最低月工资标准" if "不低于" in r.min_wage_status
+         ("计入部分 ≥ 地方最低月工资标准" if r.min_wage_ok
           else "工资构成部分低于地方最低月工资标准"),
-         "ok" if "不低于" in r.min_wage_status else "bad")
+         "ok" if r.min_wage_ok else "bad")
     cur += 1
     emit("工时与加班合规",
          r.work_time_legality,
          ("；".join(r.work_time_issues) if r.work_time_issues
           else "未触发工时违规条款"),
-         "ok" if "不违法" in r.work_time_legality else "bad")
+         "ok" if r.work_time_legal else "bad")
     cur += 1
     emit("公司雇佣成本（仅参考）",
          r.company_cost_status,
          "非全日制小时最低工资参考",
          "i")
     cur += 1
-    legal_standard = ("月工时≤220h / 月加班≤36h / 上班≤26天 / 单日加班≤3h；"
-                      "工作日加班×1.5 · 休息日×2.0 · 法定节假日×3.0")
+    # 判定标准文案由常量生成（calc.compliance_standard_text / overtime_rate_text），
+    # 避免与 calc 里的阈值手写两份对不上
+    legal_standard = calc.compliance_standard_text() + "；" + calc.overtime_rate_text()
     emit("判定标准", "—", legal_standard, "i")
     cur += 1
 
     # 列宽
-    ws.column_dimensions["A"].width = 26
+    ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 22
     ws.column_dimensions["C"].width = 28
 

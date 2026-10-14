@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
-from . import model
+
+from . import config, model
 
 PAYABLE_DAYS = 21.75  # 月计薪天数（国家规定，固定值不可改）
 
@@ -20,6 +21,26 @@ MAX_MONTHLY_WORK_DAYS = 26
 def _f(v: float) -> float:
     """只保留 6 位精度的纯数处理。小时数、天数、比例等非金额字段用此函数。"""
     return round(float(v or 0.0), 6)
+
+
+def compliance_standard_text() -> str:
+    """合规判定的「判定标准」文案。
+
+    数字全部取自本模块的 ``MAX_*`` 常量 —— 报表页与导出的 Excel 共用这一份，
+    避免多处手写后「常量改了、文案没改」（这四项目前曾是硬编码的 220/36/26/3）。
+    """
+    return (f"月工时≤{MAX_MONTHLY_WORK_HOURS:g}h / 月加班≤{MAX_MONTHLY_OVERTIME_HOURS:g}h / "
+            f"上班≤{MAX_MONTHLY_WORK_DAYS:g}天 / 单日加班≤{MAX_DAILY_OVERTIME_H:g}h")
+
+
+def overtime_rate_text() -> str:
+    """三档加班倍率文案（如「工作日加班×1.5 · 休息日×2.0 · 法定节假日×3.0」）。
+
+    倍率读 ``config.OT_RATE_*``（与 :func:`compute` 算钱时用的是同一份）。
+    """
+    return (f"工作日加班×{config.OT_RATE_WORKDAY:.1f} · "
+            f"休息日×{config.OT_RATE_RESTDAY:.1f} · "
+            f"法定节假日×{config.OT_RATE_HOLIDAY:.1f}")
 
 
 def _round2(v: float) -> float:
@@ -92,7 +113,7 @@ class Result:
     # 请假扣款
     leave_deduction_days: float = 0.0      # B28 缺勤天数扣款
     leave_deduction_hours: float = 0.0     # B29 请假小时扣款
-    leave_deduction_total: float = 0.0     # B27 请假扣款小计
+    leave_deduction_total: float = 0.0     # B27 请假扣款小计（报表里叫「请假扣的总工资」）
     leave_per_day: float = 0.0             # B31 日薪 = (应发 − 个人扣除) ÷ 约定工作天数
     leave_per_hour: float = 0.0            # B32 时薪 = 日薪 ÷ 8（8 = 法定标准工作日）
     # 加班折算单价
@@ -106,6 +127,10 @@ class Result:
     min_wage_status: str = ""              # 与月最低工资标准的比较结论
     work_time_legality: str = ""           # "违法" / "不违法"
     company_cost_status: str = ""          # 与非全日制小时最低工资的比较结论
+    # 判定结果本身（上面几个 status 是给界面 / 报表**显示**的文案）：
+    # 颜色、图标、徽章一律读下面两个布尔 —— 别再拿文案做子串匹配（文案一改颜色就会跟着错）
+    min_wage_ok: bool = False              # 计入最低工资标准的工资 ≥ 月最低工资标准
+    work_time_legal: bool = False          # 工时 / 加班是否合法（issues 为空）
     # 工时合规明细（违法时 UI / 报表可以逐条展示）
     work_time_issues: list = field(default_factory=list)  # [str,...]
     daily_ot_over3_days: int = 0                            # 单日加班超 3h 的天数
@@ -180,9 +205,9 @@ def compute(book: model.MonthBook) -> Result:
     r.ot_hours_workday = _f(s.workday_ot_hours)
     r.ot_hours_restday = _f(s.restday_ot_hours)
     r.ot_hours_holiday = _f(s.holiday_ot_hours)
-    r.overtime_wage_workday = _round2(1.5 * r.ot_hours_workday * r.overtime_hourly_wage)
-    r.overtime_wage_restday = _round2(2.0 * r.ot_hours_restday * r.overtime_hourly_wage)
-    r.overtime_wage_holiday = _round2(3.0 * r.ot_hours_holiday * r.overtime_hourly_wage)
+    r.overtime_wage_workday = _round2(config.OT_RATE_WORKDAY * r.ot_hours_workday * r.overtime_hourly_wage)
+    r.overtime_wage_restday = _round2(config.OT_RATE_RESTDAY * r.ot_hours_restday * r.overtime_hourly_wage)
+    r.overtime_wage_holiday = _round2(config.OT_RATE_HOLIDAY * r.ot_hours_holiday * r.overtime_hourly_wage)
     r.overtime_wage_total = _round2(r.overtime_wage_workday + r.overtime_wage_restday + r.overtime_wage_holiday)
 
     # 计入最低工资标准的：仅 wage 类型工资项（不含加班工资、不含公司补贴/津贴）
@@ -245,7 +270,8 @@ def compute(book: model.MonthBook) -> Result:
                                     / _cost_hours if _cost_hours > 0 else 0.0)
 
     # 合规
-    r.min_wage_status = "不低于月最低工资标准" if r.wage_components_total >= s.min_wage else "低于月最低工资标准"
+    r.min_wage_ok = r.wage_components_total >= s.min_wage
+    r.min_wage_status = "不低于月最低工资标准" if r.min_wage_ok else "低于月最低工资标准"
 
     # 工时与加班合规：分别检查 4 条维度，任一命中 → 违法 + 写入 issues 明细
     issues: list[str] = []
@@ -263,6 +289,7 @@ def compute(book: model.MonthBook) -> Result:
             days_label = ",".join(str(d) for d in over3_days[:6]) + f"…共 {len(over3_days)} 天"
         issues.append(f"单日加班超过 {MAX_DAILY_OVERTIME_H:g}h 的日期：{days_label} 号")
     r.work_time_issues = issues
+    r.work_time_legal = not issues
     r.work_time_legality = "违法" if issues else "不违法"
 
     r.company_cost_status = ("大于非全日制小时最低工资标准"
@@ -335,7 +362,7 @@ def _build_groups(book: model.MonthBook, r: Result) -> list:
     """把核算结果整理成报表分组（标题 + 行），供报表页与 Excel 导出共用。
 
     每行由 `_line()` 构造：`kind` 取 n（普通）/ i（只读灰字）/ ok（合规）/
-    bad（违规），`bold` 表示加粗小计行。
+    bad（违规）/ sec（组内小标题，只有 `label` 没有值），`bold` 表示加粗合计行。
     """
     c = r.counts
     g = []
@@ -368,13 +395,32 @@ def _build_groups(book: model.MonthBook, r: Result) -> list:
         _line("月工作总时长", value=r.monthly_work_hours, unit="小时", bold=True),
     ]})
 
+    # 应发分组按「工资构成 → 加班工资 → 两种口径拆分 → 合计」四段排（用灰字小标题分段）。
+    # 加班工资合计 = 三档加班工资 + 固定加班工资（与薪酬页加班卡「加班工资合计」同口径）。
+    _ot_wage_subtotal = _round2(r.overtime_wage_total + book.fixed_overtime_wage)
+    # 「非加班工资合计」= 基本工资项 + 津贴 + 固定津贴 + 公司补贴（也就是应发里不含加班的部分）。
+    # 用「应发 − 加班工资合计」反推（不是把四个分项相加）：这样「非加班合计 + 加班合计 =
+    # 应发工资合计」恒等，不会因各分项分别取整而差 1 分。
+    _base_wage_subtotal = _round2(r.gross_wage - _ot_wage_subtotal)
     g.append({"title": "工资核算（应发）", "lines": [
+        _line("工资构成", kind="sec"),
+        _line("基本工资项合计（工资类）", value=r.wage_components_total),
         _line("津贴合计（按出勤天数）", value=r.perday_allowances_total),
         _line("固定津贴/一次性奖励合计", value=r.fixed_allowances_total),
+        _line("公司补贴", value=r.company_subsidies_included),
+        _line("非加班工资合计", value=_base_wage_subtotal, bold=True),
+        _line("加班工资", kind="sec"),
+        # 加班费的三行计算依据（灰字）：日工资 = 基数 ÷ 月计薪天数 21.75；
+        # 小时工资 = 基数 ÷ (21.75 × 8)；下面三档加班工资 = 各自倍数 × 小时工资 × 时长
+        _line("加班费计算基数", value=book.overtime_base, kind="i"),
+        _line("加班费计算的日工资", value=r.overtime_daily_wage, kind="i"),
+        _line("加班费计算的小时工资", value=r.overtime_hourly_wage, kind="i"),
         _line("工作日加班工资", value=r.overtime_wage_workday),
         _line("休息日加班工资", value=r.overtime_wage_restday),
         _line("法定节假日加班工资", value=r.overtime_wage_holiday),
         _line("固定加班工资", value=book.fixed_overtime_wage),
+        _line("加班工资合计", value=_ot_wage_subtotal, bold=True),
+        _line("两种口径拆分（仅对照，两组相加都等于应发工资）", kind="sec"),
         _line("计入最低工资标准的工资", value=r.in_wage_part),
         _line("不计入最低工资标准的工资", value=r.not_in_wage_part),
         # 与上面两行是同一笔应发工资的另一种拆分（Excel B24/B25 的位置）
@@ -392,12 +438,14 @@ def _build_groups(book: model.MonthBook, r: Result) -> list:
         _line("应发扣除个人项目后", value=r.after_deduction, bold=True),
     ]})
 
+    # 请假扣款：前两行是「一天 / 一小时扣多少」（灰字，不是扣款金额），后两行才是
+    # 按天数 / 小时数乘出来的实际扣款，最后一行是两者相加的总扣款。
     g.append({"title": "请假扣款", "lines": [
-        _line("请假每天扣", value=r.leave_per_day, kind="i"),
-        _line("请假每小时扣", value=r.leave_per_hour, kind="i"),
-        _line("缺勤天数扣款", value=r.leave_deduction_days),
-        _line("请假小时扣款", value=r.leave_deduction_hours),
-        _line("请假扣款小计", value=r.leave_deduction_total, bold=True),
+        _line("请假一天扣除的工资", value=r.leave_per_day, kind="i"),
+        _line("请假一个小时扣除的工资", value=r.leave_per_hour, kind="i"),
+        _line("请假扣的天工资", value=r.leave_deduction_days),
+        _line("请假扣的小时工资", value=r.leave_deduction_hours),
+        _line("请假扣的总工资", value=r.leave_deduction_total, bold=True),
     ]})
 
     g.append({"title": "实发结果", "lines": [
@@ -410,13 +458,13 @@ def _build_groups(book: model.MonthBook, r: Result) -> list:
 
     g.append({"title": "合规判定", "lines": [
         _line("计入最低工资标准的工资与月最低工资标准比较", text=r.min_wage_status,
-              kind="ok" if "不低于" in r.min_wage_status else "bad"),
+              kind="ok" if r.min_wage_ok else "bad"),
         _line("工作时间是否违法", text=r.work_time_legality,
-              kind="ok" if "不违法" in r.work_time_legality else "bad"),
+              kind="ok" if r.work_time_legal else "bad"),
     ] + [
         _line(f"  · {issue}", kind="bad") for issue in r.work_time_issues
     ] + ([
-        _line("  · 判定标准：月工时≤220h / 加班≤36h / 上班≤26天 / 单日加班≤3h", kind="i")
+        _line("  · 判定标准：" + compliance_standard_text(), kind="i")
     ] if not r.work_time_issues else []) + [
         # 公司雇佣成本比较为参考信息，不作为合规判定的强制依据
         _line("公司雇佣成本与小时最低工资比较（仅参考）", text=r.company_cost_status, kind="i"),
