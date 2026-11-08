@@ -1,0 +1,18 @@
+{
+  "name": "attendance-harmony-core",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "工作考勤表 · 鸿蒙版 —— 纯 TS 业务逻辑层（可在 Node 中单测/对拍，最终拷入 ArkTS 工程）",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "~5.6.3",
+    "vitest": "~2.1.9"
+  }
+}

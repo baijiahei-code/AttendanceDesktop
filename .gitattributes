@@ -25,3 +25,8 @@
 *.spec  text
 *.txt   text
 *.json  text
+
+# 鸿蒙端（harmony-app/）：TypeScript / ArkTS / json5 统一按 LF 存储
+*.ts     text eol=lf
+*.ets    text eol=lf
+*.json5  text eol=lf

@@ -1,7 +1,8 @@
 # 工作考勤表（Attendance Desktop）
 
-一款完全离线的 **月度考勤 + 工资核算** 桌面工具（Python / PySide6，支持
-**Windows** 与 **Linux**）。
+一款完全离线的 **月度考勤 + 工资核算** 工具，同一套核算口径覆盖三个平台：
+**桌面版**（Python / PySide6，支持 **Windows** 与 **Linux**）与
+**鸿蒙版**（HarmonyOS PC / ArkTS + ArkUI，源码在 [`harmony-app/`](harmony-app/README.md)）。
 按月记录出勤与工资项，自动核算加班费、社保 / 公积金、请假扣款、应发 / 实发、
 **最低工资与工时合规判定**，把每月「填表 + 算工资」从 Excel 公式里解放出来。
 
@@ -11,6 +12,9 @@
 
 - **Windows**：`AttendanceDesktop-Setup-<版本>.exe`（安装程序）/ `AttendanceDesktop-v<版本>-win64.zip`（免安装）
 - **Linux**：`attendance-desktop_<版本>_amd64.deb`（Debian 系）/ `attendance-desktop-<版本>-1.x86_64.rpm`（rpm 系）
+- **HarmonyOS**：目前**不提供预编译 HAP**（分发需华为开发者证书签名）；自行构建见
+  [`harmony-app/README.md`](harmony-app/README.md)，或在仓库根目录执行 `一键打包.bat harmony`
+  （macOS / Linux 用 `./一键打包.sh harmony`）
 
 > 本仓库**不含**打包产物（`release/` 已被 `.gitignore` 忽略）；需要自行构建见下文「打包发行」。
 
@@ -25,12 +29,17 @@
 - ✅ **合规判定**：月最低工资、月工时 ≤ 220h、单日加班 ≤ 3h、月加班 ≤ 36h、每小时雇佣成本
 - 🔒 **月份锁定**：整月只读（UI 禁用 + 写入拦截双保险）；参数页另有「跟随月最低工资」的字段级锁（最低工资 / 加班费基数 / 公积金缴费基数）
 - 📤 **Excel 导出**：报表页导出单月报表（一张 sheet：汇总 + 明细分组 + 合规判定）、年度汇总页导出 12 个月的年度表
+- 📱 **鸿蒙版（HarmonyOS PC）**：与桌面版同一套核算口径（`harmony-app/tests/parity.test.ts` 做数值对拍，包含 54 个对拍用例）；
+  ArkUI 界面（状态管理 V2）、Preferences + HUKS 加密存储、**CSV 导出**（内容结构与桌面版 xlsx 一致：标题 / 备注 / 汇总 / 各核算分组含合规判定；
+  月份用 `‹ 上月` `下月 ›` + 左侧历史月份列表跳转）。其余差异见 [`harmony-app/README.md` → 与桌面版的差异](harmony-app/README.md#与桌面版的差异)
 - 🎨 **统一 UI 框架**：5 种卡片变体（default / hero / stat / quick / row），QSS 一处切主题
 
 ## 环境要求
 
 - **Python 3.10+**（开发 / 打包机，实测 3.14）
 - **操作系统**：Windows 10+；Linux **x86_64 且 glibc ≥ 2.38**（预编译安装包 deb / rpm 的实测基线）
+- **鸿蒙版**：**DevEco Studio 26.x**（含 HarmonyOS SDK）+ Node.js；仓库路径需为 **ASCII**
+  （hvigor 不支持含中文的绝对路径）
 - 打包需对应的工具链：Windows 装 **Inno Setup 6**；deb 需 Debian 系的 `dpkg-deb`；
   rpm 需 `rpmbuild`（Debian 系可 `sudo apt install -y rpm` 获取）
 
@@ -65,9 +74,20 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python scripts/smoke_test.py
 > `ensurepip is not available`）。另：`gmssl` 在国内镜像常缺，安装时请走默认
 > PyPI 源（`scripts/setup_linux.sh` 已自动处理）。
 
-数据默认保存在用户数据目录下（每月一个 JSON 文件）：Windows 为
+**HarmonyOS（鸿蒙版）**：不依赖 Python，需 DevEco Studio 26.x。跑逻辑层测试不需要鸿蒙工具链：
+
+```powershell
+cd harmony-app
+npm install
+  npm test          # 鸿蒙端逻辑层用例（含与桌面版 Python 的数值对拍，对拍需本地生成基准）
+```
+
+构建 / 安装 HAP 见 [`harmony-app/README.md`](harmony-app/README.md)（或仓库根的 `一键打包.bat harmony`）。
+
+桌面版数据默认保存在用户数据目录下（每月一个 JSON 文件）：Windows 为
 `%LOCALAPPDATA%\工作考勤表\data\`，其它平台为 `$XDG_DATA_HOME/工作考勤表/data`；
 可用环境变量 `ATT_DATA_DIR` 覆盖数据目录。导出的 Excel 默认落在系统「文档」目录。
+鸿蒙版的数据保存在应用沙箱内（Preferences + HUKS 加密），不写入外部目录。
 
 ### 只能开一个窗口
 
@@ -161,9 +181,13 @@ bash scripts/setup_linux.sh       # 首次：建 venv + 装依赖 + 跑国密自
 >    与 `xcb-util-cursor`（该包只在 openEuler 的 **EPOL** 仓库）而启动失败；实测数据与补装
 >    命令见 `ARCHITECTURE.md` → **Linux 包格式（deb / rpm）**。
 
-> **一个入口，多平台分派**：`scripts/pack_all.py`（薄壳：`一键打包.bat` / `一键打包.sh`）——
-> Windows 走 `pack_windows.py`；Linux 走 `pack_deb.py` / `pack_rpm.py` / `all`。deb 与 rpm
-> **共用同一套 PyInstaller 产物与运行时裁剪逻辑**（`pack_rpm.py` 复用 `pack_deb.py` 的函数），
+> **两个入口，多平台分派**：
+> - `一键打包.bat`（Windows）：默认 `scripts/pack_all.py` → `pack_windows.py`（便携目录 + Inno Setup 安装包）；
+>   加 `harmony` 子命令转 `harmony-app/scripts/pack_hap.ps1`（鸿蒙 HAP）。
+> - `一键打包.sh`（Linux / macOS）：默认 `scripts/pack_all.py` → `pack_deb.py`（`rpm` / `all` 亦然）；
+>   加 `harmony` 子命令转 `harmony-app/scripts/pack_hap.sh`（鸿蒙 HAP）。
+>
+> deb 与 rpm **共用同一套 PyInstaller 产物与运行时裁剪逻辑**（`pack_rpm.py` 复用 `pack_deb.py` 的函数），
 > 差别只在最后的包格式组装；PyInstaller 不能交叉编译，所以 Windows 与 Linux **必须各跑一次**。
 > `all` 里两个包各跑一遍 PyInstaller（耗时约翻倍）；在 Windows 上误传 `deb` / `rpm` / `all`
 > 会被直接拒绝（退出码 2，不会静默失败）。
@@ -176,6 +200,34 @@ openpyxl==3.1.5
 gmssl==3.2.2       # 国密算法（本体纯 Python；会带 pycryptodomex 这个 C 扩展）
 pyinstaller==6.22.2
 ```
+
+### HarmonyOS（HAP）
+
+同一套入口，第二个参数选目标：
+
+```powershell
+一键打包.bat                    # 桌面版（Windows exe + 安装程序）
+一键打包.bat harmony            # 鸿蒙版 HAP → release\AttendanceHarmony-v<版本>-<模式>[-unsigned].hap
+一键打包.bat harmony -Install   # 打包 + 安装到已连接的模拟器/真机并启动
+一键打包.bat harmony -Clean     # 先清构建缓存
+```
+
+macOS / Linux 用 `./一键打包.sh harmony`（参数：`--install` / `--check` / `--clean` / `--debug`）。
+
+脚本会自动定位 DevEco Studio（`-DevEco` → `%DEVECO_STUDIO_HOME%` → 常见安装路径）、
+同步 `core/` → `ets/core/`、编译（release，失败自动退回 debug），并优先收集签名版 HAP。
+未配签名时产物带 `-unsigned` 后缀（只能装到开了调试授权的设备）。
+
+> **仓库里不含任何证书，可自行签名**（免费，需华为账号）：在 DevEco 里勾选
+> `File → Project Structure → Signing Configs → Automatically generate signature` 后重新打包即可。
+> 自动签名只对**自己连接过 / 在 AGC 注册过的设备**有效（上限 100 台）；要给别人装必须用
+> 发布签名 + AGC 邀请测试或上架。完整步骤（含 bundleName 改名、有效期、常见报错）见
+> [`harmony-app/README.md` → 签名与分发](harmony-app/README.md#签名与分发自己签名)。
+
+> ⚠ HAP **不能在鸿蒙 PC 上编译**（设备上无 DevEco SDK / hvigor），必须在 Windows 或 macOS 上构建，
+> 再用 `hdc install -r` 装到设备。
+
+细节见 [`harmony-app/README.md`](harmony-app/README.md)。
 
 ## 项目结构
 
@@ -208,8 +260,8 @@ pyinstaller==6.22.2
 ├── AttendanceDesktop.spec   PyInstaller 打包描述
 ├── installer.iss            Inno Setup 安装脚本
 ├── requirements.txt         Python 依赖
-├── 一键打包.bat              一键打包（Windows 壳：双击即构建 exe + 免安装版）
-├── 一键打包.sh               一键打包（Linux 壳：默认打 deb，可传 rpm / all）
+├── 一键打包.bat              一键打包（Windows 壳：默认桌面版；`harmony` 子命令打鸿蒙 HAP）
+├── 一键打包.sh              一键打包（Linux/macOS 壳：默认 deb，可传 rpm / all；`harmony` 打鸿蒙 HAP）
 ├── scripts/                 构建与测试脚本（不参与运行时打包）
 │   ├── pack_all.py          统一打包入口（按平台 / 格式分派：win / deb / rpm / all）
 │   ├── pack_windows.py      Windows 构建实现（PyInstaller + Inno Setup）
@@ -219,9 +271,18 @@ pyinstaller==6.22.2
 │   ├── verify_deb.sh        deb 免 root 验证（内容 / 权限 / 解包试运行）
 │   ├── verify_rpm.sh        rpm 免 root 验证（同上，解包用 rpm2cpio | cpio）
 │   └── smoke_test.py        离屏冒烟测试（30+ 组回归断言）
+├── harmony-app/             **鸿蒙版**（HarmonyOS / ArkTS，与桌面版同一套核算口径）
+│   ├── core/                纯 TS 逻辑层（模型 / 核算 / 节假日 / 最低工资表）
+│   ├── tests/               Vitest 单测 + 与桌面版 Python 的数值对拍（141 例，对拍需本地生成基准）
+│   ├── scripts/             对拍导出、数据表导出、HAP 构建脚本
+│   ├── docs/                移植方案与进度
+│   └── harmony/             DevEco Studio 工程（2in1 / API 26）
 ├── ARCHITECTURE.md          架构说明（开发者视角）
 └── LICENSE                  GNU GPL v3
 ```
+
+> 鸿蒙版是同一款软件的 HarmonyOS PC 端实现，详见 [`harmony-app/README.md`](harmony-app/README.md)。
+> 两端的核算逻辑、最低工资表、节假日表、报表口径一致（`harmony-app/tests/parity.test.ts` 做数值对拍）。
 
 ## 核算口径（内置）
 
@@ -241,6 +302,9 @@ pyinstaller==6.22.2
 ## 数据 / 隐私
 
 - 完全本地离线：月份数据、参数模板、设置均只保存在本机（信创 / Linux 下数据目录与文件会自动收紧到 `700` / `600`，见上文）；
+- 桌面版存每月一个 JSON（Windows 用 DPAPI、其它平台用国密加密凭据）；鸿蒙版存应用沙箱内的
+  Preferences，整体由 **HUKS（AES-256-GCM，密钥存系统密钥库、不可导出）** 加密；
+  两端的存档结构同构（`MonthBook.to_dict()`），将来可做互导；
 - 内置**全国省级官方最低工资表**（省 / 地区二级，数据截至 **2026 年 1 月 1 日**，来源：人社部《全国各省、自治区、直辖市最低工资标准情况》+ 各省人社厅调整通知）；
   维护/核对用 `python scripts/update_minwage.py`（自动抓人社部最新一期并比对内置表，详见 ARCHITECTURE.md）；
 - 可选：配置自有「节假日 / 最低工资」API 地址（**无内置默认 API**，模型名也要自己填；不填就不会发请求），点击「🌐 联网查询 / 🌐 API 一键铺」时才联网拉取（凭据加密落盘，见上文平台与加密说明）；

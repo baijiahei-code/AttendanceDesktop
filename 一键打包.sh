@@ -1,31 +1,59 @@
 #!/bin/sh
-# 一键打包（Linux / 信创）—— 与 Windows 的 一键打包.bat 对称。
+# 一键打包（Linux / macOS / Git Bash）—— 与 Windows 的 一键打包.bat 对称，单一入口。
 #
-# 真正的构建逻辑在统一入口 scripts/pack_all.py 里，本文件只是一层薄壳：
-# 选好解释器、把参数原样透传。
+# 真正的构建逻辑都在各自脚本里，本文件只是一层薄壳，按第一个参数分派：
 #
-#   Linux   ->  scripts/pack_deb.py     ->  release/attendance-desktop_<版本>_<架构>.deb
-#               scripts/pack_rpm.py     ->  release/attendance-desktop-<版本>-<release>.<架构>.rpm
-#   Windows ->  scripts/pack_windows.py ->  release/AttendanceDesktop/ 等（Windows 侧用 .bat）
+#   桌面版（默认）： scripts/pack_all.py
+#     deb   -> release/attendance-desktop_<版本>_<架构>.deb
+#     rpm   -> release/attendance-desktop-<版本>-<release>.<架构>.rpm
+#     all   -> 一次出齐 deb + rpm
 #
-# 首次使用请先建好环境：  bash scripts/setup_linux.sh
-# 打包完可离线验证：      bash scripts/verify_deb.sh release/*.deb
-#                         bash scripts/verify_rpm.sh release/*.rpm
-# 需要保留中间目录排查时：./一键打包.sh --keep
+#   鸿蒙版： harmony-app/scripts/pack_hap.sh
+#     harmony -> release/AttendanceHarmony-v<版本>-<模式>[-unsigned].hap
 #
-# 包格式（默认 deb）：
-#   ./一键打包.sh            # deb —— Debian 系 Linux（如 Deepin 25）
-#   ./一键打包.sh rpm        # rpm —— rpm 系 Linux（如 openEuler 24.03+）
-#                            #        需先装工具链：sudo apt install -y rpm
-#   ./一键打包.sh all        # 一次出齐 deb + rpm（PyInstaller 各跑一次，耗时翻倍）
+# 用法：
+#   ./一键打包.sh                   # 桌面版 deb（默认）
+#   ./一键打包.sh rpm               # 桌面版 rpm
+#   ./一键打包.sh all               # 桌面版 deb + rpm
+#   ./一键打包.sh harmony           # 鸿蒙 HAP
+#   ./一键打包.sh harmony --install # 鸿蒙 HAP + 安装到设备并启动
+#   ./一键打包.sh harmony --check   # 只自检鸿蒙工具链
+#   ./一键打包.sh --help            # 显示帮助
 #
-# ⚠ 能装到哪些系统由**构建机的 glibc**决定，与包格式无关：基线更低的系统
-#   （麒麟 V10 / V10 SP1、UOS 20 等）装了也起不来，详见 README「glibc 基线」。
+# 首次使用桌面版请先建好环境：  bash scripts/setup_linux.sh
+# 打包完可离线验证：            bash scripts/verify_deb.sh release/*.deb
+#                              bash scripts/verify_rpm.sh release/*.rpm
+#
+# ⚠ 桌面版能装到哪些系统由**构建机的 glibc**决定，与包格式无关
+#   （麒麟 V10 / V10 SP1、UOS 20 等基线较低，详见 README「glibc 基线」）。
+# ⚠ 鸿蒙 HAP 无法在鸿蒙 PC 上编译（设备无 DevEco SDK / hvigor），
+#   必须在 Windows 或 macOS 上构建，再 hdc install 到设备。
 
 set -e
 
 cd "$(dirname "$0")"
 
+usage() {
+    sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    harmony|hm)
+        shift
+        if [ ! -f "harmony-app/scripts/pack_hap.sh" ]; then
+            echo "[ERROR] 未找到 harmony-app/scripts/pack_hap.sh" >&2
+            echo "        请在仓库根目录执行本脚本" >&2
+            exit 2
+        fi
+        exec bash harmony-app/scripts/pack_hap.sh "$@"
+        ;;
+esac
+
+# ---- 桌面版（原有逻辑）----
 PY=".venv/bin/python"
 
 if [ ! -x "$PY" ]; then

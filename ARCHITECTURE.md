@@ -4,6 +4,11 @@
 配合 [`README.md`](README.md) 使用 —— README 是用户视角，本文是开发者视角。
 
 > 目录说明：源码已在仓库根目录，入口为根目录的 `main.py`，业务代码都在 `app/` 包内。
+>
+> 仓库同时包含 **鸿蒙版**（HarmonyOS PC）源码，在 [`harmony-app/`](harmony-app/README.md)：
+> `harmony-app/core/*.ts` 是与 `app/calc.py` 等价的纯 TS 实现（同一套核算口径，含 54 个用例的数值对拍），
+> `harmony-app/harmony/entry/src/main/ets/` 是 ArkTS/ArkUI 界面层。
+> 两端**各自独立实现**，不共享代码文件，只共享「口径」与「数据表」。
 
 ---
 
@@ -426,6 +431,54 @@ Qt 6.5 起 `xcb` 平台插件需要 `libxcb-cursor.so.0`，它在 RPM 体系里�
 退出码均为 0；`rpm -V` 完整性校验通过、共 **292 个文件**、属主 root:root；`rpm -e` 卸载无残留；
 程序在 `offscreen` 与真实 **`xcb`** 后端下均能正常启动（后者用 Xvfb 虚拟显示验证，持续运行未崩溃）。
 deb 侧在 **Deepin 25** 实测 `dpkg -i` 成功安装并可正常运行。
+
+---
+
+## 鸿蒙端（`harmony-app/`）
+
+鸿蒙版是同一款软件的 HarmonyOS PC 实现，**不是**桌面代码的翻译器产物：它把「核算规则」重写为纯 TS，
+再在其上搭 ArkUI 界面。两端的唯一契约是「同一份 `MonthBook` 结构 + 同一套公式」。
+
+```
+harmony-app/
+├─ core/                    纯 TS 逻辑层（禁 any/unknown/索引签名/Function，同时满足 Node 与 ArkTS）
+│   ├─ model.ts             MonthBook / PayItem / DayEntry / RelatedUnit（与 app/model.py 同构）
+│   ├─ calc.ts              compute(book) -> Result（逐项对齐 app/calc.py）
+│   ├─ holidays.ts          法定节假日 / 调休（本地表 + 分类入口）
+│   ├─ minwage.data.ts      全国最低工资表（由 scripts/export_minwage.py 从 app/wages.py 导出）
+│   ├─ api.ts               OpenAI 兼容 API 的纯逻辑（端点拼接 / JSON 提取 / 合理性校验）
+│   ├─ csv.ts               CSV 导出（桌面版是 Excel）
+│   └─ num.ts               与 Python 一致的取整 / 分组格式化（避免 0.01 差异）
+├─ tests/                   vitest：单测 + `parity.test.ts` 与 Python 版数值对拍
+├─ fixtures/baseline.json   对拍基准（由 scripts/dump_baseline.py 从 Python 版生成；含真实工资，**不入库**）
+├─ scripts/make_harmony_icon.py  用 `app/icon.png` 生成分层图标（background / foreground / startIcon），勿手改 PNG
+└─ harmony/entry/src/main/ets/
+    ├─ core/                上面 core/ 的**自动副本**（build_hap.ps1 / sync_core.ps1 同步，勿手改）
+    ├─ model/Crypto.ets     HUKS AES-256-GCM（⚠ GCM 的 AEAD 必须用 HUKS_TAG_AE_TAG 单独传）
+    ├─ model/Storage.ets    Preferences + 加密（写后回读校验）
+    ├─ model/Snap.ets       界面快照（每次变更整体重算，避免细粒度脏标记）
+    ├─ model/ApiClient.ets  网络层（ArkTS http）
+    └─ pages/Index.ets      外壳 + 七个页面（@ComponentV2 / 状态管理 V2）
+```
+
+### 两端必须保持一致的地方
+
+| 项 | 桌面版 | 鸿蒙版 |
+| --- | --- | --- |
+| 核算公式 | `app/calc.py` | `core/calc.ts`（`tests/parity.test.ts` 对拍） |
+| 最低工资表 | `app/wages.py` | `core/minwage.data.ts`（脚本导出，勿手改） |
+| 节假日 / 调休 | `app/holidays.py` | `core/holidays.ts` |
+| 工资项目录 | `app/model.py` + `pay_item_menu` | `core/paycatalog.ts`（脚本导出） |
+| 应用图标 | `app/icon.png` → `app/icon.ico`（`scripts/make_icon.py`） | 同一张 `app/icon.png` → `harmony-app/scripts/make_harmony_icon.py` 生成的 5 张 PNG |
+| 存档结构 | `MonthBook.to_dict()` | `core/model.ts` 同名结构（将来可互导） |
+
+### 关键约束（踩过的坑）
+
+- **`core/` 不能加装饰器**：`@ObservedV2/@Trace` 只存在于 ArkTS，加进去 Node 侧测试就跑不了。
+- **`ets/core/` 是副本**：改逻辑只改 `core/*.ts`，构建脚本会覆盖；删文件也会同步删。
+- **hvigor 不支持中文路径**：仓库必须放在 ASCII 路径下才能构建 HAP。
+- **落盘要防抖 + 串行**：HUKS 加密是异步的，连续改动会并发多个 `saveMonth`，
+  加密耗时不均时后完成的旧快照会覆盖新快照 → 400ms 防抖 + 一次只有一个在途写。
 
 ---
 

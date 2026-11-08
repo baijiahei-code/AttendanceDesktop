@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "工作考勤表主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "考勤记录与工资核算"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "工作考勤表"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+# ---- Node / TypeScript（core 层单测与对拍） ----
+node_modules/
+dist/
+
+# ---- 鸿蒙工具链产物 ----
+harmony/oh_modules/
+harmony/**/oh_modules/
+harmony/**/build/
+harmony/**/.hvigor/
+harmony/**/.preview/
+harmony/.idea/
+harmony/entry/build/
+# 模拟器系统镜像（数 GB，绝不入库）
+harmony/system-image/
+# DevEco 自动生成，含本机 SDK 路径
+harmony/local.properties
+
+# ---- 本地调试产物 ----
+*.jpeg
+*.jpg
+*.log
+win_desktop.png
+cost_win.png
+crop*.jpeg
+l.json
+l2.json
+h1.json
+h2.json
+
+# ---- 含真实工资数据的东西（一律不入库）----
+# 种子数据：由 scripts/export_seed.py 从桌面版存档导出
+harmony/entry/src/main/resources/rawfile/seed_months.json
+# 界面核对用的样例账本：由 scripts/dump_demo_book.py 导出
+harmony/entry/src/main/ets/model/demo.data.ts
+# 数值对拍基准：由 scripts/dump_baseline.py 用桌面版真实存档生成
+# （tests/parity.test.ts 在文件缺失时自动 skip，本地生成后可跑到完整用例）
+fixtures/baseline.json
+
+# ---- 开发期一次性脚本（依赖作者本机的桌面版存档，不入库）----
+scripts/dump_demo_book.py
+scripts/export_seed.py
+scripts/inspect_months.py
+
+# ---- 签名材料（自己签名用，绝不要入库）----
+# 私钥泄露 = 别人能以你的身份发布应用
+*.p12
+*.cer
+*.p7b
+*.p7f
+*.csr
+signature/
+harmony/signature/
