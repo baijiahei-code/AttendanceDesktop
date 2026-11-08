@@ -31,9 +31,11 @@ app/
 ├── excel_style.py           # Excel 导出的统一样式（HEADER_FILL/BODY_FONT/...）
 ├── style.py                 # Qt 样式表（QSS）
 ├── config.py                # 应用级常量（按钮文案、tooltip、参数名）
+├── main_window.py          # 主窗口骨架：多继承各 pages_* mixin、月份切换、锁定状态机、状态栏
 ├── ui.py                    # 通用 widget 工具（NumberSpin、PAGES 表、锁按钮、
 │                            #   字段级锁 / 只读横幅 / 忙碌按钮 / 导出默认路径等共享小件）
-├── pages_*.py               # 每个工作区一个 mixin（被 MainWindow 多继承）
+├── pages_*.py               # 每个工作区一个 mixin（被 MainWindow 多继承），共 7 个：
+│                            #   overview / units / calendar / salary / params / report / annual
 └── widgets/
     ├── card.py              # 统一卡片框架：5 种 variant + set_locked
     ├── salary_strip.py      # 顶部应发/到手/扣除金额条
@@ -71,7 +73,7 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
 > Mixin 之间通过 `MainWindow` 上的共享状态通信（`self._book`、`self._last_result`、
 > `self._is_locked`、`self.store`）。
 
-**为什么不用组合 / 多窗口？** 同一个 `book` 需要被 6 个页同时观察，组合式会引入 controller 层来转发事件，重复更高。
+**为什么不用组合 / 多窗口？** 同一个 `book` 需要被 7 个页同时观察，组合式会引入 controller 层来转发事件，重复更高。
 
 ### 2. Widget 回调对称模式
 
@@ -444,22 +446,46 @@ harmony-app/
 ├─ core/                    纯 TS 逻辑层（禁 any/unknown/索引签名/Function，同时满足 Node 与 ArkTS）
 │   ├─ model.ts             MonthBook / PayItem / DayEntry / RelatedUnit（与 app/model.py 同构）
 │   ├─ calc.ts              compute(book) -> Result（逐项对齐 app/calc.py）
-│   ├─ holidays.ts          法定节假日 / 调休（本地表 + 分类入口）
+│   ├─ holidays.ts          法定节假日 / 调休（本地表 + 分类入口 classifyDay）
 │   ├─ minwage.data.ts      全国最低工资表（由 scripts/export_minwage.py 从 app/wages.py 导出）
+│   ├─ paycatalog.ts        工资项目录（由 scripts/export_paycatalog.py 从 app/model.py 导出）
+│   ├─ units.ts             11 种相关单位类型
 │   ├─ api.ts               OpenAI 兼容 API 的纯逻辑（端点拼接 / JSON 提取 / 合理性校验）
-│   ├─ csv.ts               CSV 导出（桌面版是 Excel）
+│   ├─ csv.ts               月度报表 / 年度汇总的 CSV 生成（桌面版是 xlsx，内容结构一致）
 │   └─ num.ts               与 Python 一致的取整 / 分组格式化（避免 0.01 差异）
-├─ tests/                   vitest：单测 + `parity.test.ts` 与 Python 版数值对拍
+├─ tests/                   vitest：87 个纯逻辑用例 + `parity.test.ts` 54 例与 Python 数值对拍
 ├─ fixtures/baseline.json   对拍基准（由 scripts/dump_baseline.py 从 Python 版生成；含真实工资，**不入库**）
-├─ scripts/make_harmony_icon.py  用 `app/icon.png` 生成分层图标（background / foreground / startIcon），勿手改 PNG
+├─ scripts/
+│   ├─ pack_hap.ps1         Windows 一键打包 HAP（找 DevEco → 构建 → 收产物 → 可选安装）
+│   ├─ pack_hap.sh          POSIX 版（macOS / Git Bash；注意 hdc 不认 MSYS 路径，要用 cygpath）
+│   ├─ build_hap.ps1        只构建（release 失败自动退 debug），pack_hap 调用它
+│   ├─ sync_core.ps1        core/ → ets/core/ 的同步（纯 ASCII）
+│   ├─ make_harmony_icon.py 用 `app/icon.png` 生成分层图标 + startIcon（勿手改 PNG）
+│   └─ export_*.py          最低工资表 / 工资项目录 / 对拍基准的导出脚本
 └─ harmony/entry/src/main/ets/
     ├─ core/                上面 core/ 的**自动副本**（build_hap.ps1 / sync_core.ps1 同步，勿手改）
     ├─ model/Crypto.ets     HUKS AES-256-GCM（⚠ GCM 的 AEAD 必须用 HUKS_TAG_AE_TAG 单独传）
-    ├─ model/Storage.ets    Preferences + 加密（写后回读校验）
+    ├─ model/Storage.ets    MonthStorage（月份密文）+ SettingsStorage（全局设置）
     ├─ model/Snap.ets       界面快照（每次变更整体重算，避免细粒度脏标记）
     ├─ model/ApiClient.ets  网络层（ArkTS http）
+    ├─ model/Exporter.ets    CSV 落盘（DocumentViewPicker + 写完 stat 校验大小）
     └─ pages/Index.ets      外壳 + 七个页面（@ComponentV2 / 状态管理 V2）
 ```
+
+### 存储与设置（鸿蒙）
+
+| 存储 | 键 | 内容 | 加密 |
+| --- | --- | --- | --- |
+| `MonthStorage` | `YYYY-MM` | 整月的 `MonthBook.toDict()` | **整份** HUKS AES-256-GCM |
+| `SettingsStorage` | `units` | 相关单位表（与月份无关） | 整份 |
+| | `units_locked` | 单位表自己的锁（重启后保持） | 整份 |
+| | `api_config` | 三行文本：URL / 模型名 / Key | 整份 |
+| | `templates` | 参数模板（每行一个：名称\t参数 JSON） | 整份 |
+| | `work_region` | 工作地：两行文本（省 / 地区） | 整份 |
+| | `seed_imported` | 示例数据是否已导入（一次性） | 整份 |
+
+⚠ 与桌面版**刚好相反**：桌面版只加密 `api_key` 一个字段（`storage._SENSITIVE_KEYS`），账本 JSON 是明文靠
+文件权限；鸿蒙版没有「敏感字段」分档，一律整份密文。
 
 ### 两端必须保持一致的地方
 
@@ -470,7 +496,10 @@ harmony-app/
 | 节假日 / 调休 | `app/holidays.py` | `core/holidays.ts` |
 | 工资项目录 | `app/model.py` + `pay_item_menu` | `core/paycatalog.ts`（脚本导出） |
 | 应用图标 | `app/icon.png` → `app/icon.ico`（`scripts/make_icon.py`） | 同一张 `app/icon.png` → `harmony-app/scripts/make_harmony_icon.py` 生成的 5 张 PNG |
-| 存档结构 | `MonthBook.to_dict()` | `core/model.ts` 同名结构（将来可互导） |
+| 存档结构 | `MonthBook.to_dict()` | `core/model.ts` 同名结构 |
+
+> ⚠ 上面说的「存档结构一致」只到**字段层面**：桌面版的月度 JSON 是明文（权限 0600），
+> 鸿蒙版存在 Preferences 里的是整份 HUKS 密文。**两端存档无法直接互换**，要迁移只能各自重新录入。
 
 ### 关键约束（踩过的坑）
 
@@ -479,6 +508,12 @@ harmony-app/
 - **hvigor 不支持中文路径**：仓库必须放在 ASCII 路径下才能构建 HAP。
 - **落盘要防抖 + 串行**：HUKS 加密是异步的，连续改动会并发多个 `saveMonth`，
   加密耗时不均时后完成的旧快照会覆盖新快照 → 400ms 防抖 + 一次只有一个在途写。
+- **业务提示要驻留**：铺设 / 锁定这类操作会顺带落盘，`persist()` 的「保存中… / 已保存」
+  会把提示顶掉（实测只活几百毫秒）→ `setBusinessState()` + `statusHoldUntil` 驻留 4 秒。
+- **铺表只覆盖三类日期 + 周末**：`applyHolidaySets()` 与桌面版 `_apply_holidays` 同口径，
+  普通工作日的状态**不动**（否则手填的请假会被冲成「上班」）；「法定节假日」标记整月重写。
+- **HAP 不能在鸿蒙 PC 上构建**：设备上没有 DevEco SDK / hvigor / node，必须在 Windows 或 macOS 上构建。
+- **脚本编码**：`.ps1` / `.bat` 一律**纯 ASCII**（PS 5.1 把无 BOM UTF-8 当 ANSI）；`.sh` 必须 **LF**。
 
 ---
 
@@ -545,6 +580,10 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 - **节假日日型判定只有一处**：`holidays.classify_day()`（优先级：法定 → 补班 → 放假），
   内置表（`day_kind`）与 API 铺设（`pages_calendar._apply_holidays`）都调它；
   要拿原始集合用公开的 `holidays.year_sets()`
+- **铺表只覆盖「法定 / 放假调休 / 补班 + 普通周末」**：普通工作日的状态不动（保留手填的请假），
+  「法定节假日」标记整月重写。桌面版 `_apply_holidays` 与鸿蒙版 `applyHolidaySets` 必须是同一口径
+- **工作地是全局设置**，不在月度账本里：桌面存 `settings.json` 的 `province` / `region`，
+  鸿蒙存 Preferences 的 `work_region`；首次安装默认「安徽 · 池州」（桌面 `pages_params` 的兜底）
 
 ---
 
@@ -564,6 +603,11 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 | 改 Linux 打包 / 验证 | `scripts/pack_deb.py`、`scripts/pack_rpm.py`（构建，后者复用前者）、`scripts/verify_deb.sh` / `verify_rpm.sh`（免 root 验证）、`scripts/setup_linux.sh`（环境） |
 | 修改锁定行为 | `main_window._apply_lock_state` + `Card.set_locked()` |
 | 改工资计算规则 | `app/calc.py`，单测在 `scripts/smoke_test.py` 的 `calc OK` / `calc leave-fold edge OK` 段 |
+| 改鸿蒙端逻辑 | `harmony-app/core/*.ts`（纯 TS，改完 `npm test`；`npm run build` 不需要） |
+| 改鸿蒙端界面 | `harmony-app/harmony/entry/src/main/ets/pages/Index.ets`（一个文件包含七个页面） |
+| 改完 `core/` 后 | 必须让 `ets/core/` 副本同步：`harmony-app/scripts/sync_core.ps1`（build_hap 会自动调用） |
+| 改鸿蒙图标 | 换 `app/icon.png` → 跑 `harmony-app/scripts/make_harmony_icon.py`（生成 5 张 PNG，勿手改） |
+| 改鸿蒙打包 / 安装 | `harmony-app/scripts/pack_hap.ps1` / `pack_hap.sh`；签名在 DevEco 的 Signing Configs 里配，脚本自动收集签名版 HAP |
 
 ---
 
@@ -571,7 +615,7 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 
 | 选择 | 替代 | 选它的原因 |
 | --- | --- | --- |
-| Mixin（6 继承） | 单文件 / Page class 组合 | 单一 book 6 处观察，组合要写 controller，转发重复 |
+| Mixin（7 继承） | 单文件 / Page class 组合 | 单一 book 7 处观察，组合要写 controller，转发重复 |
 | `book.locked` 顶层字段 | 单独的 `_locked_months.json` | 跟着月份存档走，无 lock 字段时默认 False 自然回退 |
 | 加密分双后端：Windows 用 DPAPI、信创用国密 | 全平台统一用一种 | DPAPI 在 Windows 上是系统级、无需密钥文件；国密满足信创要求且不依赖外部服务 |
 | 国密加密不交给系统密钥环（keyring） | 用 Secret Service 托管 | 那把“使用国密算法”这个需求本身消解了；且引入 dbus 依赖、无桌面会话时不可用 |
@@ -580,6 +624,8 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 | 150ms 合并保存 | 实时保存 | 连续改 N 个字段只触发 1 次写盘与 1 次重算 |
 | rpm 构建**复用** `pack_deb.py` 的函数 | 抽 `_pack_common.py` 三方共用 | deb 链路已实测跑通，抽公共模块要改动它、引入回归风险；`import` 复用则零改动 |
 | rpm 关掉自动依赖探测（`AutoReqProv: no`） | 让 rpm 自动生成依赖 | 产物自带数十个 `.so`，自动生成的 Requires 目标机必然不满足 → 安装即报「依赖不满足」 |
+| 鸿蒙导出 CSV 而不是 xlsx | 用 ArkTS 自己拼一个 minimal xlsx（zip + XML） | ArkTS 没有 openpyxl；CSV 的内容结构已与 xlsx 一致（标题 / 备注 / 汇总 6 项 / 各核算分组含合规判定），双击就能用 Excel 打开 |
+| 鸿蒙**整份数据**加密（HUKS） | 像桌面版那样只加密 `api_key` | 鸿蒙侧加密成本低（系统密钥库 + 一次异步调用），整份密文也省去「哪些字段敏感」的维护；代价是存档不能与桌面版互换 |
 
 ---
 
@@ -692,3 +738,24 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 31. **报表页双层滚动区**：`report_page` 已被 `_init_page_widgets` 的 `_scroll_for()` 包了一层
     `QScrollArea`，`_fill_report` 里又套了一层（外层永远不滚、只有内层滚）。
     内层已删，内容直接放在页面布局里（`report_root` / `report_lay` 现在就是页面本身）
+
+### 鸿蒙端（2026-11-08）
+
+32. **工作地选了却不保存**：`pickProvince` / `pickRegion` 只改界面变量（`@Local fProvince/fRegion`），
+    从未写盘 —— 重启就回到「请选择省份」。桌面版本来就存在 `settings.json` 的 `province` / `region`。
+    改为写入 `SettingsStorage` 的 `work_region`（两行文本）并在启动时读回；
+    首次安装默认「安徽 · 池州」（与桌面 `pages_params` 的兜底一致，只影响显示、不改账本）
+33. **「铺本地表」把整月都改成上班 / 休息**：`fillOfficial` 对**每一天**都赋状态，
+    用户手填的请假（事假 / 病假…）被冲成「上班」。桌面版只在「法定 / 放假调休 / 补班 + 周末」范围内覆盖。
+    抽出 `applyHolidaySets()` 与桌面同口径，并补上「影响 N 天」提示与「与内置官方表不一致」警告
+34. **铺设结果一闪而过**：铺完要落盘，`persist()` 的「保存中… / 已保存」立刻把业务提示顶掉
+    （桌面版用 `STATUS_HOLD_MS` 解决过同一问题）。加 `statusHoldUntil` + `setBusinessState()`，
+    业务提示驻留 4 秒，期间不显示保存状态
+35. **API 一键铺拿到空数据会清空整月标记**：`fillOfficialByApi` 没判三组集合是否全空 ——
+    模型偶尔返回空数组时会把整月 `mark` 清 0。改为全空时报「未返回任何日期（本月未改动）」并直接返回
+36. **应用图标是 DevEco 模板默认图**：新建工程自带蓝色方块，与 `app/icon.png` 无关（桌面名还显示 `label`）。
+    新增 `scripts/make_harmony_icon.py` 从 `app/icon.png` 生成分层图标（background 纯色 +
+    foreground 居中 60% 安全区 + startIcon），`AppScope` 与 `entry` 两处都要换；
+    改完 `string.json` 后**只做覆盖安装不会刷新桌面图标名**，必须卸载重装
+37. **`sync_core.ps1` 含中文**：PowerShell 5.1 把无 BOM UTF-8 当 ANSI，非 936 代码页下输出乱码。
+    已改成纯 ASCII，并在文件头写明约束（`.ps1` / `.bat` 一律纯 ASCII，`.sh` 必须 LF）
