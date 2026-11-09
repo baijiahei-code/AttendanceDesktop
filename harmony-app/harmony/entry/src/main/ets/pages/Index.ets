@@ -2563,8 +2563,9 @@ struct Index {
       .width('100%')
       .padding({ left: 20, right: 20, top: 8, bottom: 8 })
 
-      // 报表 / 年度汇总 只读展示，不涉及修改操作，不显示锁定提示条
-      if (this.isLocked && this.pageKey !== 'report' && this.pageKey !== 'annual') {
+      // 工作台 / 报表 / 年度汇总 只读展示，不涉及修改操作，不显示锁定提示条
+      if (this.isLocked && this.pageKey !== 'report' && this.pageKey !== 'annual'
+        && this.pageKey !== 'overview') {
         Row() {
           Text('🔒  当前月份已锁定 · 仅供查看，所有修改操作已屏蔽')
             .fontSize(11)
