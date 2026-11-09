@@ -452,33 +452,44 @@ export const MIN_WAGE_ROWS: MinWageRow[] = [
   new MinWageRow('黑龙江', '大兴安岭', 1910.0, 18.2),
 ];
 
-/** 某省下的地区名（保序）。 */
-export function minWageRegions(province: string): string[] {
-  const out: string[] = [];
+/** 省份 → 该省地区（保序）；模块级建一次，查询 O(1)。 */
+const BY_PROVINCE: Map<string, string[]> = (() => {
+  const m: Map<string, string[]> = new Map<string, string[]>();
   for (const r of MIN_WAGE_ROWS) {
-    if (r.province === province) {
-      out.push(r.region);
+    const arr: string[] | undefined = m.get(r.province);
+    if (arr === undefined) {
+      m.set(r.province, [r.region]);
+    } else {
+      arr.push(r.region);
     }
   }
-  return out;
+  return m;
+})();
+
+/** `${省}/${地区}` → 标准行；模块级建一次，查询 O(1)。 */
+const BY_REGION: Map<string, MinWageRow> = (() => {
+  const m: Map<string, MinWageRow> = new Map<string, MinWageRow>();
+  for (const r of MIN_WAGE_ROWS) {
+    m.set(`${r.province}/${r.region}`, r);
+  }
+  return m;
+})();
+
+/** 某省下的地区名（保序；返回的是只读共享数组，调用方不要原地改）。 */
+export function minWageRegions(province: string): string[] {
+  return BY_PROVINCE.get(province) ?? [];
 }
 
 /** 查某省某地区的标准；查不到返回 null（**不静默替换成别的城市**）。 */
 export function minWageOf(province: string, region: string): MinWageRow | null {
-  for (const r of MIN_WAGE_ROWS) {
-    if (r.province === province && r.region === region) {
-      return r;
-    }
-  }
-  return null;
+  return BY_REGION.get(`${province}/${region}`) ?? null;
 }
 
 /** 全省第一个地区（“全省未细分”场景，与桌面版 get(p) 行为一致）。 */
 export function minWageFirst(province: string): MinWageRow | null {
-  for (const r of MIN_WAGE_ROWS) {
-    if (r.province === province) {
-      return r;
-    }
+  const regions: string[] | undefined = BY_PROVINCE.get(province);
+  if (regions === undefined || regions.length === 0) {
+    return null;
   }
-  return null;
+  return BY_REGION.get(`${province}/${regions[0]}`) ?? null;
 }

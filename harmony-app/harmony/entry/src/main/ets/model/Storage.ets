@@ -1,16 +1,14 @@
 /**
- * 存档（鸿蒙侧）：Preferences + HUKS 加密。
+ * 存档（鸿蒙侧）：Preferences 明文 + 仅 API Key 用 HUKS 加密。
  *
- * 存储选型依据官方文档「通过用户首选项实现数据持久化」：
- *   轻量键值数据用 Preferences（同步 API：getPreferencesSync / putSync / getSync / flushSync）。
- * 加密选型：HUKS（系统密钥库，密钥不可导出）—— 见 Crypto.ets。
+ * 与桌面版一致：
+ *   - 月份账本 / 参数模板 / 相关单位 / 工作地 → **明文**（靠应用沙箱隔离，其它应用读不到）；
+ *   - 只有 API Key 用 HUKS 加密 —— `HUKS AES-256-GCM（由系统密钥库托管密钥，不可导出，无密钥文件）`
+ *     （与桌面版同一句式：Windows 是 `Windows DPAPI（由当前用户账户托管密钥，无密钥文件）`）。
  *
- * 落盘格式：`h1:<base64(nonce||ciphertext)>`（AES-256-GCM）。
- * HUKS 不可用时降级为 `h0:<base64(明文)>` 并置 cryptoAvailable=false（界面会提示未加密）。
- *
- * 业务数据仍是 `MonthBook.to_dict()` 的 JSON —— 与桌面版同构，将来可导出。
- *
- * ⚠ HUKS 只有异步接口，所以本类的读写都是 Promise。
+ * 为什么不再整份加密：HUKS 对称密钥不可导出、也没有备份/恢复接口，
+ * 而 `backup_config.json` 会把 Preferences 一起备份 —— 换机恢复后密钥没了、密文解不开，
+ * 账本会静默丢失。把「可重建的凭据」和「不可重建的账本」分开，是桌面版一直采用的口径。
  */
 
 import { preferences } from '@kit.ArkData';
@@ -22,10 +20,31 @@ function pad2(n: number): string {
   return (n < 10 ? '0' : '') + n.toString();
 }
 
+/** API 配置（url / model 明文，key 为加密令牌）。 */
+export class ApiStored {
+  url: string = '';
+  model: string = '';
+  key: string = '';
+}
+
+/** 存储用记录（字段名短，减少 Preferences 体积）。 */
+class ApiRecord {
+  u: string = '';
+  m: string = '';
+  k: string = '';
+
+  constructor(u: string, m: string, k: string) {
+    this.u = u;
+    this.m = m;
+    this.k = k;
+  }
+}
+
+const API_CONFIG_KEY: string = 'api_config';
+
 export class MonthStorage {
   private pref: preferences.Preferences | null = null;
   private storeName: string = 'attendance_months';
-  private crypter: Crypter = new Crypter();
   lastError: string = '';
 
   constructor(ctx: common.UIAbilityContext) {
@@ -35,19 +54,6 @@ export class MonthStorage {
     } catch (e) {
       this.lastError = `初始化首选项失败：${e}`;
     }
-  }
-
-  location(): string {
-    return `用户首选项「${this.storeName}」+ HUKS 加密`;
-  }
-
-  cryptoOk(): boolean {
-    return this.crypter.available;
-  }
-
-  /** 加密失败的阶段与错误码（界面要显示，方便定位）。 */
-  cryptoError(): string {
-    return this.crypter.lastError;
   }
 
   private key(year: number, month: number): string {
@@ -65,23 +71,20 @@ export class MonthStorage {
     }
   }
 
-  /** 读一个月；键不存在返回 null。解密失败返回 null 并记错误（不静默给空账本）。 */
+  /** 读一个月；键不存在返回 null。读取失败返回 null 并记 lastError（不静默给空账本）。 */
   async loadMonth(year: number, month: number): Promise<MonthBook | null> {
     if (this.pref === null) {
       this.lastError = '首选项未初始化';
       return null;
     }
+    this.lastError = '';
     const k: string = this.key(year, month);
     try {
-      if (!this.pref.hasSync(k)) {
-        return null;
-      }
       const stored = this.pref.getSync(k, '') as string;
       if (stored.length === 0) {
         return null;
       }
-      const text: string = await this.crypter.decrypt(stored);
-      const book: MonthBook = MonthBook.fromDict(JSON.parse(text) as MonthBookDict);
+      const book: MonthBook = MonthBook.fromDict(JSON.parse(stored) as MonthBookDict);
       if (book.year !== year || book.month !== month) {
         this.lastError = `${k} 年月不符（读到 ${book.year}-${pad2(book.month)}）`;
         return null;
@@ -97,7 +100,7 @@ export class MonthStorage {
     }
   }
 
-  /** 保存一个月：加密 → putSync → flushSync → 回读校验。 */
+  /** 保存一个月：明文 JSON → putSync → flushSync → 回读校验（与桌面版一致，靠应用沙箱隔离）。 */
   async saveMonth(book: MonthBook): Promise<boolean> {
     if (this.pref === null) {
       this.lastError = '首选项未初始化';
@@ -105,17 +108,13 @@ export class MonthStorage {
     }
     const k: string = this.key(book.year, book.month);
     try {
-      const json: string = JSON.stringify(book.toDict());
-      const stored: string = await this.crypter.encrypt(json);
+      const stored: string = JSON.stringify(book.toDict());
       this.pref.putSync(k, stored);
       this.pref.flushSync();
       const back = this.pref.getSync(k, '') as string;
       if (back !== stored) {
         this.lastError = `回读不一致（写 ${stored.length} / 读 ${back.length}）`;
         return false;
-      }
-      if (!this.crypter.available) {
-        this.lastError = this.crypter.lastError;
       }
       return true;
     } catch (e) {
@@ -124,21 +123,21 @@ export class MonthStorage {
     }
   }
 
-  /** 已存档的月份列表（"YYYY-MM"，升序）。 */
+  /** 已存档的月份列表（"YYYY-MM"，升序）。以实际键为准，不限制年份范围。 */
   listMonths(): string[] {
     const out: string[] = [];
     if (this.pref === null) {
       return out;
     }
-    const year: number = new Date().getFullYear();
     try {
-      for (let y = year - 3; y <= year + 1; y++) {
-        for (let m = 1; m <= 12; m++) {
-          if (this.pref.hasSync(this.key(y, m))) {
-            out.push(this.key(y, m));
-          }
+      const all: Object = this.pref.getAllSync();
+      const keys: string[] = Object.keys(all);
+      for (const k of keys) {
+        if (k.length === 7 && k.charAt(4) === '-') {
+          out.push(k);
         }
       }
+      out.sort((a: string, b: string): number => a < b ? -1 : (a > b ? 1 : 0));
     } catch (e) {
       this.lastError = `列月份失败：${e}`;
     }
@@ -179,10 +178,6 @@ export class SettingsStorage {
     }
   }
 
-  location(): string {
-    return `用户首选项「${this.storeName}」+ HUKS 加密`;
-  }
-
   cryptoOk(): boolean {
     return this.crypter.available;
   }
@@ -191,7 +186,7 @@ export class SettingsStorage {
     return this.crypter.lastError;
   }
 
-  /** 启动预热：确保当前密钥就绪。 */
+  /** 启动预热：确保 HUKS 密钥就绪（只用于 API Key）。 */
   async warmUp(): Promise<boolean> {
     return await this.crypter.ready();
   }
@@ -220,7 +215,7 @@ export class SettingsStorage {
       if (stored.length === 0) {
         return null;
       }
-      return await this.crypter.decrypt(stored);
+      return stored;
     } catch (e) {
       this.lastError = `读取相关单位失败：${e}`;
       return null;
@@ -233,16 +228,13 @@ export class SettingsStorage {
       return false;
     }
     try {
-      const stored: string = await this.crypter.encrypt(text);
+      const stored: string = text;
       this.pref.putSync('units', stored);
       this.pref.flushSync();
       const back = this.pref.getSync('units', '') as string;
       if (back !== stored) {
         this.lastError = `相关单位回读不一致（写 ${stored.length} / 读 ${back.length}）`;
         return false;
-      }
-      if (!this.crypter.available) {
-        this.lastError = this.crypter.lastError;
       }
       return true;
     } catch (e) {
@@ -251,7 +243,7 @@ export class SettingsStorage {
     }
   }
 
-  /** 通用读取（加密存档）。键不存在返回 null。 */
+  /** 通用读取（明文）。键不存在返回 null。 */
   async loadText(key: string): Promise<string | null> {
     if (this.pref === null) {
       this.lastError = '设置首选项未初始化';
@@ -265,21 +257,21 @@ export class SettingsStorage {
       if (stored.length === 0) {
         return null;
       }
-      return await this.crypter.decrypt(stored);
+      return stored;
     } catch (e) {
       this.lastError = `读取 ${key} 失败：${e}`;
       return null;
     }
   }
 
-  /** 通用写入（加密存档 + 回读校验）。 */
+  /** 通用写入（明文 + 回读校验）。 */
   async saveText(key: string, text: string): Promise<boolean> {
     if (this.pref === null) {
       this.lastError = '设置首选项未初始化';
       return false;
     }
     try {
-      const stored: string = await this.crypter.encrypt(text);
+      const stored: string = text;
       this.pref.putSync(key, stored);
       this.pref.flushSync();
       const back = this.pref.getSync(key, '') as string;
@@ -287,13 +279,79 @@ export class SettingsStorage {
         this.lastError = `回读不一致（${key}）`;
         return false;
       }
-      if (!this.crypter.available) {
-        this.lastError = this.crypter.lastError;
-      }
       return true;
     } catch (e) {
       this.lastError = `保存 ${key} 失败：${e}`;
       return false;
     }
+  }
+
+  /** 读 API 配置（单键 JSON）。解密失败时 key 为空并把原因写进 lastError。 */
+  async loadApiConfig(): Promise<ApiStored> {
+    const out: ApiStored = new ApiStored();
+    if (this.pref === null) {
+      this.lastError = '设置首选项未初始化';
+      return out;
+    }
+    this.lastError = '';
+    try {
+      const stored = this.pref.getSync(API_CONFIG_KEY, '') as string;
+      if (stored.length === 0) {
+        return out;
+      }
+      const rec: ApiRecord = JSON.parse(stored) as ApiRecord;
+      out.url = rec.u === undefined ? '' : rec.u;
+      out.model = rec.m === undefined ? '' : rec.m;
+      const token: string = rec.k === undefined ? '' : rec.k;
+      if (token.length > 0) {
+        out.key = await this.crypter.decrypt(token);
+      }
+      return out;
+    } catch (e) {
+      this.lastError = `读取 API 配置失败：${e}`;
+      return out;
+    }
+  }
+
+  /** 写 API 配置（单键一次写入；key 走 HUKS，失败降级 h0 并记原因）。 */
+  async saveApiConfig(url: string, model: string, key: string): Promise<boolean> {
+    if (this.pref === null) {
+      this.lastError = '设置首选项未初始化';
+      return false;
+    }
+    this.lastError = '';
+    try {
+      const token: string = key.length > 0 ? await this.crypter.encrypt(key) : '';
+      const stored: string = JSON.stringify(new ApiRecord(url, model, token));
+      this.pref.putSync(API_CONFIG_KEY, stored);
+      this.pref.flushSync();
+      const back = this.pref.getSync(API_CONFIG_KEY, '') as string;
+      if (back !== stored) {
+        this.lastError = '回读不一致（api_config）';
+        return false;
+      }
+      if (!this.crypter.available) {
+        this.lastError = this.crypter.lastError;
+      }
+      // 清掉旧版本拆开存的三个键（本版本不再使用）
+      this.pref.deleteSync('api_url');
+      this.pref.deleteSync('api_model');
+      this.pref.deleteSync('api_key');
+      this.pref.flushSync();
+      return true;
+    } catch (e) {
+      this.lastError = `保存 API 配置失败：${e}`;
+      return false;
+    }
+  }
+
+  /** 锁定月份集合（逗号分隔的 "YYYY-MM"）。 */
+  async loadLockedMonths(): Promise<string> {
+    const txt: string | null = await this.loadText('locked_months');
+    return txt === null ? '' : txt;
+  }
+
+  async saveLockedMonths(text: string): Promise<boolean> {
+    return await this.saveText('locked_months', text);
   }
 }

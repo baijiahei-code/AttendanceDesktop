@@ -315,6 +315,22 @@ ek       = SM2-公钥加密(k_master)            # 密文顺序 C1C3C2
 - 数据目录 `700`、数据文件 `600`（`storage.secure_path()`；`ATT_PERMS=off` 可关闭）
 - Windows 不走国密，因此**没有密钥文件**（DPAPI 的密钥由系统托管）
 
+### 三端加密描述的统一句式
+
+「关于」对话框里展示的加密描述（不含任何密钥材料）三端统一为「算法（密钥托管位置，无密钥文件）」：
+
+| 平台 | 描述 | 密钥在哪 | 有密钥文件吗 |
+| --- | --- | --- | --- |
+| Windows | `Windows DPAPI（由当前用户账户托管密钥，无密钥文件）` | Windows 账户（CryptProtectData） | 无 |
+| 信创 / Linux | `SM2(C1C3C2) + SM4-CBC + HMAC-SM3（私钥存 <数据目录>/keys/，权限 0600）` | `<数据目录>/keys/sm2_private.hex` | 有（随数据目录） |
+| 鸿蒙 | `HUKS AES-256-GCM（由系统密钥库托管密钥，不可导出，无密钥文件）` | HUKS 系统密钥库（别名 `attendance_store_key`） | 无 |
+
+⚠ 鸿蒙**不能**照搬 Windows 那句「无密钥文件」就完事：DPAPI 是密钥交给系统账户托管、
+同账户同机器可解；HUKS 的密钥在系统密钥库内且**不可导出**，所以额外写了「不可导出」——
+代价是换机 / 云恢复后 Key 解不开（需重填），账本因为是明文不受影响。
+对应代码：桌面 `app/crypto.py::describe()`、`app/main_window.py::_crypto_summary()`；
+鸿蒙 `pages/Index.ets::cryptoSummary()`。
+
 ### 平台分支清单（改动时注意）
 
 | 位置 | 分支依据 | 说明 |
@@ -446,46 +462,66 @@ harmony-app/
 ├─ core/                    纯 TS 逻辑层（禁 any/unknown/索引签名/Function，同时满足 Node 与 ArkTS）
 │   ├─ model.ts             MonthBook / PayItem / DayEntry / RelatedUnit（与 app/model.py 同构）
 │   ├─ calc.ts              compute(book) -> Result（逐项对齐 app/calc.py）
+│   ├─ config.ts            计算常量（OT 倍率 / 合规阈值）+ 界面色板
 │   ├─ holidays.ts          法定节假日 / 调休（本地表 + 分类入口 classifyDay）
 │   ├─ minwage.data.ts      全国最低工资表（由 scripts/export_minwage.py 从 app/wages.py 导出）
 │   ├─ paycatalog.ts        工资项目录（由 scripts/export_paycatalog.py 从 app/model.py 导出）
 │   ├─ units.ts             11 种相关单位类型
 │   ├─ api.ts               OpenAI 兼容 API 的纯逻辑（端点拼接 / JSON 提取 / 合理性校验）
 │   ├─ csv.ts               月度报表 / 年度汇总的 CSV 生成（桌面版是 xlsx，内容结构一致）
-│   └─ num.ts               与 Python 一致的取整 / 分组格式化（避免 0.01 差异）
+│   ├─ num.ts               与 Python 一致的取整 / 分组格式化（避免 0.01 差异）
+│   └─ index.ts             统一出口（便于一次性 import）
 ├─ tests/                   vitest：87 个纯逻辑用例 + `parity.test.ts` 54 例与 Python 数值对拍
 ├─ fixtures/baseline.json   对拍基准（由 scripts/dump_baseline.py 从 Python 版生成；含真实工资，**不入库**）
+├─ docs/porting-plan.md    移植方案与实施记录（设计取舍 / 里程碑 / 踩坑规则）
 ├─ scripts/
 │   ├─ pack_hap.ps1         Windows 一键打包 HAP（找 DevEco → 构建 → 收产物 → 可选安装）
 │   ├─ pack_hap.sh          POSIX 版（macOS / Git Bash；注意 hdc 不认 MSYS 路径，要用 cygpath）
 │   ├─ build_hap.ps1        只构建（release 失败自动退 debug），pack_hap 调用它
 │   ├─ sync_core.ps1        core/ → ets/core/ 的同步（纯 ASCII）
 │   ├─ make_harmony_icon.py 用 `app/icon.png` 生成分层图标 + startIcon（勿手改 PNG）
-│   └─ export_*.py          最低工资表 / 工资项目录 / 对拍基准的导出脚本
+│   └─ export_*/dump_*.py   数据表与基准导出（最低工资 / 工资项目录 / 种子月份 / 对拍基准）
 └─ harmony/entry/src/main/ets/
     ├─ core/                上面 core/ 的**自动副本**（build_hap.ps1 / sync_core.ps1 同步，勿手改）
-    ├─ model/Crypto.ets     HUKS AES-256-GCM（⚠ GCM 的 AEAD 必须用 HUKS_TAG_AE_TAG 单独传）
-    ├─ model/Storage.ets    MonthStorage（月份密文）+ SettingsStorage（全局设置）
+    ├─ model/Crypto.ets     HUKS AES-256-GCM（**只用于 API Key**；GCM 的 AEAD 必须用 HUKS_TAG_AE_TAG 单独传）
+    ├─ model/Storage.ets    MonthStorage（月份明文 JSON）+ SettingsStorage（全局设置）
+    ├─ model/BookCache.ets  内存月份缓存（LRU，上限 12 个月）
     ├─ model/Snap.ets       界面快照（每次变更整体重算，避免细粒度脏标记）
     ├─ model/ApiClient.ets  网络层（ArkTS http）
     ├─ model/Exporter.ets    CSV 落盘（DocumentViewPicker + 写完 stat 校验大小）
-    └─ pages/Index.ets      外壳 + 七个页面（@ComponentV2 / 状态管理 V2）
+    ├─ pages/Index.ets      外壳（侧栏 / 顶栏 / 月份条）+ 状态与写操作（对应 main_window.py）
+    ├─ pages/OverviewPage.ets  工作台（对应 pages_overview.py）
+    ├─ pages/CalendarPage.ets  考勤日历（对应 pages_calendar.py）
+    ├─ pages/ParamsPage.ets    参数页（对应 pages_params.py）
+    ├─ pages/SalaryPage.ets    薪酬构成（对应 pages_salary.py）
+    ├─ pages/AnnualPage.ets    年度汇总（对应 pages_annual.py）
+    ├─ pages/ReportPage.ets    报表（对应 pages_report.py）
+    ├─ pages/UnitsPage.ets     相关单位（对应 pages_units.py）
+    ├─ pages/components.ets 复用组件（Chip / StripItem / StatCard / DayCell / 各类行）
+    └─ pages/theme.ets      配色常量（BG_PAGE / C_TEXT / C_LINE …，改主题只改这一处）
 ```
 
 ### 存储与设置（鸿蒙）
 
 | 存储 | 键 | 内容 | 加密 |
 | --- | --- | --- | --- |
-| `MonthStorage` | `YYYY-MM` | 整月的 `MonthBook.toDict()` | **整份** HUKS AES-256-GCM |
-| `SettingsStorage` | `units` | 相关单位表（与月份无关） | 整份 |
-| | `units_locked` | 单位表自己的锁（重启后保持） | 整份 |
-| | `api_config` | 三行文本：URL / 模型名 / Key | 整份 |
-| | `templates` | 参数模板（每行一个：名称\t参数 JSON） | 整份 |
-| | `work_region` | 工作地：两行文本（省 / 地区） | 整份 |
-| | `seed_imported` | 示例数据是否已导入（一次性） | 整份 |
+| `MonthStorage` | `YYYY-MM` | 整月的 `MonthBook.toDict()` JSON | 明文（应用沙箱） |
+| `SettingsStorage` | `units` | 相关单位表（与月份无关） | 明文 |
+| | `units_locked` | 单位表自己的锁（重启后保持） | 明文 |
+| | `api_config` | API 配置单键 JSON：`{"u":地址,"m":模型,"k":令牌}` | 只有 `k` 是 **HUKS** AES-256-GCM，其余明文 |
+| | `locked_months` | 已锁定月份（逗号分隔的 `YYYY-MM`） | 明文 |
+| | `templates` | 参数模板（每行一个：名称\t参数 JSON） | 明文 |
+| | `work_region` | 工作地：两行文本（省 / 地区） | 明文 |
+| | `seed_imported` | 示例数据是否已导入（一次性） | 明文 |
 
-⚠ 与桌面版**刚好相反**：桌面版只加密 `api_key` 一个字段（`storage._SENSITIVE_KEYS`），账本 JSON 是明文靠
-文件权限；鸿蒙版没有「敏感字段」分档，一律整份密文。
+✅ 与桌面版口径一致：只加密 API Key（桌面版是 `storage._SENSITIVE_KEYS`）。
+账本 JSON 是明文、靠系统应用沙箱隔离。
+
+⚠ 两个性能/一致性约定：
+- 历史月份列表只用 `MonthStorage.listMonths()`（一次 `getAllSync` 取全部键）+ `locked_months`，
+  **不逐月解析正文**；正文只在切月 / 年度汇总时读，并进 `BookCache`（LRU 12 个月）。
+- API 配置三字段**一次原子写入**（`api_config` 单键）→ 不会出现「URL 写进去了、Key 没写进去」的半成品；
+  读取失败原因留在 `SettingsStorage.lastError`，界面用 `⚠` 展示（`apiKeyError`）。
 
 ### 两端必须保持一致的地方
 
@@ -498,16 +534,16 @@ harmony-app/
 | 应用图标 | `app/icon.png` → `app/icon.ico`（`scripts/make_icon.py`） | 同一张 `app/icon.png` → `harmony-app/scripts/make_harmony_icon.py` 生成的 5 张 PNG |
 | 存档结构 | `MonthBook.to_dict()` | `core/model.ts` 同名结构 |
 
-> ⚠ 上面说的「存档结构一致」只到**字段层面**：桌面版的月度 JSON 是明文（权限 0600），
-> 鸿蒙版存在 Preferences 里的是整份 HUKS 密文。**两端存档无法直接互换**，要迁移只能各自重新录入。
+> 「存档结构一致」只到**字段层面**：桌面版是每月独立的明文 JSON 文件（权限 0600），
+> 鸿蒙版是 Preferences 键值库里的明文 JSON。**两端存档无法直接互换**，要迁移只能各自重新录入。
 
 ### 关键约束（踩过的坑）
 
 - **`core/` 不能加装饰器**：`@ObservedV2/@Trace` 只存在于 ArkTS，加进去 Node 侧测试就跑不了。
 - **`ets/core/` 是副本**：改逻辑只改 `core/*.ts`，构建脚本会覆盖；删文件也会同步删。
 - **hvigor 不支持中文路径**：仓库必须放在 ASCII 路径下才能构建 HAP。
-- **落盘要防抖 + 串行**：HUKS 加密是异步的，连续改动会并发多个 `saveMonth`，
-  加密耗时不均时后完成的旧快照会覆盖新快照 → 400ms 防抖 + 一次只有一个在途写。
+- **落盘要防抖 + 串行**：连续改动会并发多个 `saveMonth`，完成顺序不定时旧快照会覆盖新快照
+  → 400ms 防抖 + 一次只有一个在途写（与桌面版同思路）。
 - **业务提示要驻留**：铺设 / 锁定这类操作会顺带落盘，`persist()` 的「保存中… / 已保存」
   会把提示顶掉（实测只活几百毫秒）→ `setBusinessState()` + `statusHoldUntil` 驻留 4 秒。
 - **铺表只覆盖三类日期 + 周末**：`applyHolidaySets()` 与桌面版 `_apply_holidays` 同口径，
@@ -604,7 +640,7 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 | 修改锁定行为 | `main_window._apply_lock_state` + `Card.set_locked()` |
 | 改工资计算规则 | `app/calc.py`，单测在 `scripts/smoke_test.py` 的 `calc OK` / `calc leave-fold edge OK` 段 |
 | 改鸿蒙端逻辑 | `harmony-app/core/*.ts`（纯 TS，改完 `npm test`；`npm run build` 不需要） |
-| 改鸿蒙端界面 | `harmony-app/harmony/entry/src/main/ets/pages/Index.ets`（一个文件包含七个页面） |
+| 改鸿蒙端界面 | `harmony-app/harmony/entry/src/main/ets/pages/`：外壳与全部状态在 `Index.ets`，七个页面各一个 `*Page.ets`（`@ComponentV2` + `@Param`/`@Event`），复用控件在 `components.ets`，配色在 `theme.ets` |
 | 改完 `core/` 后 | 必须让 `ets/core/` 副本同步：`harmony-app/scripts/sync_core.ps1`（build_hap 会自动调用） |
 | 改鸿蒙图标 | 换 `app/icon.png` → 跑 `harmony-app/scripts/make_harmony_icon.py`（生成 5 张 PNG，勿手改） |
 | 改鸿蒙打包 / 安装 | `harmony-app/scripts/pack_hap.ps1` / `pack_hap.sh`；签名在 DevEco 的 Signing Configs 里配，脚本自动收集签名版 HAP |
@@ -625,7 +661,7 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
 | rpm 构建**复用** `pack_deb.py` 的函数 | 抽 `_pack_common.py` 三方共用 | deb 链路已实测跑通，抽公共模块要改动它、引入回归风险；`import` 复用则零改动 |
 | rpm 关掉自动依赖探测（`AutoReqProv: no`） | 让 rpm 自动生成依赖 | 产物自带数十个 `.so`，自动生成的 Requires 目标机必然不满足 → 安装即报「依赖不满足」 |
 | 鸿蒙导出 CSV 而不是 xlsx | 用 ArkTS 自己拼一个 minimal xlsx（zip + XML） | ArkTS 没有 openpyxl；CSV 的内容结构已与 xlsx 一致（标题 / 备注 / 汇总 6 项 / 各核算分组含合规判定），双击就能用 Excel 打开 |
-| 鸿蒙**整份数据**加密（HUKS） | 像桌面版那样只加密 `api_key` | 鸿蒙侧加密成本低（系统密钥库 + 一次异步调用），整份密文也省去「哪些字段敏感」的维护；代价是存档不能与桌面版互换 |
+| 鸿蒙只加密 API Key（与桌面版一致） | 整份数据都加密（HUKS） | HUKS 对称密钥不可导出、SDK 无 `backupKeyItem/restoreKeyItem`，而系统备份会带回 Preferences 却不带密钥 → 换机恢复后账本必然解不开。账本明文靠应用沙箱隔离，凭据丢了可重填。描述统一为 `HUKS AES-256-GCM（由系统密钥库托管密钥，不可导出，无密钥文件）` |
 
 ---
 

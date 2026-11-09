@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 导出文本文件（当前只用于报表 CSV）。
  *
  * 策略（按可靠性排序）：
@@ -30,9 +30,12 @@ function errText(e: Error): string {
   return code === undefined ? msg : `code=${code} ${msg}`;
 }
 
+/** 无状态的编码器，模块级复用。 */
+const ENCODER: util.TextEncoder = new util.TextEncoder();
+
 /** 写文本并校验落盘字节数；返回写入长度。 */
 function writeTextSync(uri: string, text: string): number {
-  const bytes: Uint8Array = new util.TextEncoder().encodeInto(text);
+  const bytes: Uint8Array = ENCODER.encodeInto(text);
   const buf: ArrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const file = fileIo.openSync(uri,
     fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
@@ -77,7 +80,7 @@ export class Exporter {
       const uris: string[] = await docPicker.save(options);
       if (uris !== undefined && uris.length > 0) {
         const written: number = writeTextSync(uris[0], content);
-        const expected: number = new util.TextEncoder().encodeInto(content).length;
+        const expected: number = ENCODER.encodeInto(content).length;
         if (written !== expected) {
           throw new Error(`写入校验失败（写 ${expected} / 实际 ${written}）`);
         }
@@ -96,7 +99,7 @@ export class Exporter {
     try {
       const path: string = `${this.ctx.filesDir}/${fileName}`;
       const written: number = writeTextSync(path, content);
-      const expected: number = new util.TextEncoder().encodeInto(content).length;
+      const expected: number = ENCODER.encodeInto(content).length;
       if (written !== expected) {
         throw new Error(`写入校验失败（写 ${expected} / 实际 ${written}）`);
       }

@@ -191,11 +191,19 @@ java -jar "D:\DevEco Studio\sdk\default\openharmony\toolchains\lib\app_check_too
 
 ## 数据与隐私
 
-- 应用数据存 **Preferences + HUKS 加密**（AES-256-GCM，密钥存放在系统密钥库、不可导出），
-  不写入任何外部目录。
+- 应用数据只存应用沙箱内的 **Preferences**（不写入任何外部目录）：
+  - 月份账本 / 参数模板 / 相关单位 / 工作地 / 锁定月份：**明文 JSON**（其它应用读不到）；
+  - API 配置（地址 / 模型 / Key）合成单键 `api_config`，其中 **Key 由 HUKS 加密** ——
+    `HUKS AES-256-GCM（由系统密钥库托管密钥，不可导出，无密钥文件）`
+    （与桌面版同一句式：Windows 是 `Windows DPAPI（由当前用户账户托管密钥，无密钥文件）`；
+    HUKS 不可用时降级明文并在界面提示）。
+- 这样做的好处：**账本不依赖设备密钥** —— 换机 / 备份恢复后仍能正常打开；
+  代价是账本在系统备份里是明文（若需要更强保护，可后续加「备份口令」方案）。
+- 导出报表 / 年度 CSV 时由你在系统「另存为」对话框里选择位置。
 - 凡是从桌面版真实存档导出的东西**一律不入库**（含真实工资）：
   - `harmony/entry/src/main/resources/rawfile/seed_months.json`（示例月份，`scripts/export_seed.py`）
-  - `harmony/entry/src/main/ets/model/demo.data.ts`（界面核对样例，`scripts/dump_demo_book.py`）
+  - `harmony/entry/src/main/ets/model/demo.data.ts`（`scripts/dump_demo_book.py` 生成的界面核对样例；
+    当前代码未引用，按需生成即可，不要提交）
   - `fixtures/baseline.json`（数值对拍基准，`scripts/dump_baseline.py`）
 
   需要时在自己的机器上生成（脚本只读桌面版存档，不写回）：
@@ -212,7 +220,7 @@ java -jar "D:\DevEco Studio\sdk\default\openharmony\toolchains\lib\app_check_too
 | 项 | 桌面版 | 鸿蒙版 | 说明 |
 |---|---|---|---|
 | 界面 | PySide6 / Qt | ArkUI（状态管理 V2） | 布局与文案逐页对齐，宽度自适应规则不同 |
-| 存储 | 每月一个**明文** JSON（靠文件权限 0600 保护），仅 `api_key` 用 DPAPI/国密加密 | **整份数据都加密**（月份账本 + 全部设置，HUKS AES-256-GCM） | 鸿蒙端没有「只加密敏感字段」的分档，一律整份密文存进 Preferences；两边密钥都不可导出 |
+| 存储 | 每月一个**明文** JSON（靠文件权限 0600 保护），仅 API Key 用 `Windows DPAPI（由当前用户账户托管密钥，无密钥文件）` / 信创用 `SM2 + SM4 + HMAC-SM3` | Preferences 一月一键**明文** JSON（应用沙箱），仅 API Key 用 `HUKS AES-256-GCM（由系统密钥库托管密钥，不可导出，无密钥文件）`（`api_config` 单键） | 口径一致：只加密可重建的凭据；账本明文靠系统沙箱隔离，换机 / 备份恢复不会因密钥丢失而解不开 |
 | 导出格式 | `.xlsx`（openpyxl） | `.csv`（UTF-8 带 BOM） | **内容结构一致**：标题 / 备注 / 汇总 6 项 / 各核算分组（含合规判定）；CSV 双击即可用 Excel / WPS 打开 |
 | 月份跳转 | 点月份按钮弹月历，可直接选任意年月 | `‹ 上月` / `下月 ›`，或用左侧「历史月份」列表跳转 | ArkUI 没有内置月历控件；历史月份列表同样可以直接点进去 |
 | 平台 | Windows / Linux | HarmonyOS PC（2in1） | — |
@@ -220,8 +228,8 @@ java -jar "D:\DevEco Studio\sdk\default\openharmony\toolchains\lib\app_check_too
 核算公式、最低工资数据表、节假日表、工资项目录、报表分组**与桌面版完全一致**
 （`tests/parity.test.ts` 用桌面版真实账本做了 54 例逐字段对拍）；另外 `tests/` 里还有 87 个纯逻辑用例。
 
-> ⚠ 两端**不能直接互换存档**：桌面版是明文月度 JSON（只有 `api_key` 单独加密），鸿蒙版是整份密文的
-> HUKS Preferences，只能在各自的设备上录入。
+> ⚠ 两端**不能直接互换存档**：字段结构同构（`MonthBook.to_dict()`），但桌面版是每月独立 JSON 文件，
+> 鸿蒙版是 Preferences 键值库 —— 装载方式不同，只能在各自的设备上录入。
 
 ## 许可证
 

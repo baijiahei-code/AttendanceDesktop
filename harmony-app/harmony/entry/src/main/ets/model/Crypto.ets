@@ -46,20 +46,25 @@ function errText(e: Error): string {
   return `code=${code} ${msg}`;
 }
 
+/** 编码器/解码器无状态，模块级复用（每次新建一个对象是白花钱）。 */
+const ENCODER: util.TextEncoder = new util.TextEncoder();
+const DECODER: util.TextDecoder = util.TextDecoder.create('utf-8');
+const B64: util.Base64Helper = new util.Base64Helper();
+
 function toBytes(text: string): Uint8Array {
-  return new util.TextEncoder().encodeInto(text);
+  return ENCODER.encodeInto(text);
 }
 
 function fromBytes(bytes: Uint8Array): string {
-  return util.TextDecoder.create('utf-8').decodeToString(bytes);
+  return DECODER.decodeToString(bytes);
 }
 
 function b64(bytes: Uint8Array): string {
-  return new util.Base64Helper().encodeToStringSync(bytes);
+  return B64.encodeToStringSync(bytes);
 }
 
 function unb64(text: string): Uint8Array {
-  return new util.Base64Helper().decodeSync(text);
+  return B64.decodeSync(text);
 }
 
 function joinBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -231,7 +236,7 @@ export class Crypter {
     }
   }
 
-  /** 解密；不认识的格式按明文处理（兼容早期未加密数据）。 */
+  /** 解密；不认识的格式按明文处理。 */
   async decrypt(stored: string): Promise<string> {
     if (stored.startsWith(TAG_PLAIN)) {
       return fromBytes(unb64(stored.substring(TAG_PLAIN.length)));

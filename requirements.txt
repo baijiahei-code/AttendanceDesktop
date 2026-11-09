@@ -1,5 +1,6 @@
 PySide6==6.11.2
 openpyxl==3.1.5
-# 国密算法（SM2/SM3/SM4）：纯 Python、无 C 扩展 → 信创平台打包无需目标机 libssl 带国密
+# 国密算法（SM2/SM3/SM4）：算法本体纯 Python，但依赖 pycryptodomex（C 扩展，
+# x86_64/aarch64 有 wheel，loongarch64 需自行编译）
 gmssl==3.2.2
 pyinstaller==6.22.2

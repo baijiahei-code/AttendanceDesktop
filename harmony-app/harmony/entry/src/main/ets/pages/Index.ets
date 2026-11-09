@@ -10,10 +10,10 @@
  * 2. `@Builder` 的按值传参不刷新 —— 会变的值一律走 @Param 组件，不通过 @Builder 参数传。
  */
 
-import { MonthBook, MonthBookDict, PayItem, STATUS_LABELS, createBook } from '../core/model';
+import { MonthBook, MonthBookDict, PayItem, createBook } from '../core/model';
 import { HolidaySets, classifyDay, yearSets } from '../core/holidays';
-import { CalCell, CalStat, AnnualRow, PayRow, RecGroup, RecLine, Snap, UnitRow } from '../model/Snap';
-import { MonthStorage, SettingsStorage } from '../model/Storage';
+import { CalCell, AnnualRow, Snap, UnitRow } from '../model/Snap';
+import { ApiStored, MonthStorage, SettingsStorage } from '../model/Storage';
 import {
   ApiConfig,
   ChatResult,
@@ -24,31 +24,47 @@ import {
 } from '../model/ApiClient';
 import { HolidayApiResult, WageApiResult } from '../core/api';
 import {
-  RelatedUnit, UnitDict, UNIT_ROLE_LABELS, UNIT_SELECTABLE_KEYS,
+  RelatedUnit, UnitDict, UNIT_SELECTABLE_KEYS,
   defaultUnits, unitsFromJson
 } from '../core/units';
 import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
-import { compute, Result, overtimeHourlyTip } from '../core/calc';
+import { compute, countAttendance, Result } from '../core/calc';
 import { pyGroupedFixed, pyGeneral } from '../core/num';
-import { MIN_WAGE_PROVINCES, MinWageRow, minWageOf, minWageRegions } from '../core/minwage.data';
-import { PAYITEM_DEFAULT_NAME, PAYITEM_GROUPS, PayCatalogGroup } from '../core/paycatalog';
-import { PI_COL_OP, PI_COL_STD, PI_COL_SUB, PI_COL_TYPE, TYPE_CHIPS, TypeChip, typeChipOf, DAY_PALETTES, DayPalette, dayPaletteOf } from '../core/config';
+import { MinWageRow, minWageOf, minWageRegions } from '../core/minwage.data';
+import { PAYITEM_DEFAULT_NAME } from '../core/paycatalog';
 import { reportCsv, reportFileName, csvRow } from '../core/csv';
 import { ExportResult, Exporter } from '../model/Exporter';
+import { BookCache } from '../model/BookCache';
+import {
+  StatCard, UnitRowView
+} from './components';
+import { AnnualPage } from './AnnualPage';
+import { CalendarPage } from './CalendarPage';
+import { OverviewPage } from './OverviewPage';
+import { ParamsPage } from './ParamsPage';
+import { ReportPage } from './ReportPage';
+import { SalaryPage } from './SalaryPage';
+import { UnitsPage } from './UnitsPage';
+import {
+  BG_CARD,
+  BG_PAGE,
+  C_ACCENT,
+  C_BAD,
+  C_HINT,
+  C_LABEL,
+  C_LINE,
+  C_OK,
+  C_ROW_BG,
+  C_SEL_BG,
+  C_SUB,
+  C_TEXT
+} from './theme';
 
 // ================= 常量 =================
-const BG_PAGE: string = '#F6F7FB';
-const BG_CARD: string = '#FFFFFF';
-const C_TEXT: string = '#111827';
-const C_SUB: string = '#6B7280';
-const C_HINT: string = '#9CA3AF';
-const C_ACCENT: string = '#4F46E5';
-const C_OK: string = '#0B7A3B';
-const C_BAD: string = '#C00000';
-/** 月份存档写盘防抖（毫秒）：连续输入合并成一次 HUKS 加密 + 写盘。 */
+/** 月份存档写盘防抖（毫秒）：连续输入合并成一次写盘。 */
 const SAVE_DEBOUNCE_MS: number = 400;
 /** 首次安装（从未选过）时的默认工作地：与桌面版 `pages_params` 的兜底完全一致。 */
 const DEFAULT_PROVINCE: string = '安徽';
@@ -58,572 +74,7 @@ function pad2(n: number): string {
   return (n < 10 ? '0' : '') + n.toString();
 }
 
-// ================= 可复用组件（V2：@Param 按引用同步）=================
-@ComponentV2
-struct Chip {
-  @Param label: string = '';
-  @Param active: boolean = false;
-  @Param disabled: boolean = false;
-  @Event onTap: () => void = () => {
-  };
-
-  build() {
-    Text(this.label)
-      .fontSize(12)
-      .enabled(!this.disabled)
-      .opacity(this.disabled ? 0.45 : 1)
-      .fontColor(this.active ? '#FFFFFF' : C_TEXT)
-      .backgroundColor(this.active ? C_ACCENT : '#EEF0F6')
-      .padding({ left: 9, right: 9, top: 5, bottom: 5 })
-      .borderRadius(6)
-      .onClick(() => this.onTap())
-  }
-}
-
-@ComponentV2
-struct StripItem {
-  @Param title: string = '';
-  @Param value: string = '';
-  @Param accent: string = C_TEXT;
-
-  build() {
-    Row({ space: 8 }) {
-      Text(this.title).fontSize(12).fontColor(C_SUB)
-      Text(`¥ ${this.value}`).fontSize(16).fontWeight(FontWeight.Bold).fontColor(this.accent)
-    }
-    .width('100%')
-  }
-}
-
-@ComponentV2
-struct MetaItem {
-  @Param title: string = '';
-  @Param value: string = '';
-
-  build() {
-    Row({ space: 6 }) {
-      Text(this.title).fontSize(12).fontColor(C_SUB)
-      Text(this.value).fontSize(14).fontWeight(FontWeight.Medium).fontColor(C_TEXT)
-    }
-  }
-}
-
-@ComponentV2
-struct StatCard {
-  @Param title: string = '';
-  @Param value: string = '';
-  @Param sub: string = '';
-  @Param accent: string = C_TEXT;
-
-  build() {
-    Column({ space: 6 }) {
-      Text(this.title).fontSize(12).fontColor(C_SUB)
-      Text(this.value).fontSize(24).fontWeight(FontWeight.Bold).fontColor(this.accent)
-      Text(this.sub).fontSize(11).fontColor(C_HINT)
-    }
-    .alignItems(HorizontalAlign.Start)
-    .padding(16)
-    .width('100%')
-    .backgroundColor(BG_CARD)
-    .borderRadius(12)
-  }
-}
-
-@ComponentV2
-struct DayCell {
-  @Param num: number = 0;
-  @Param midText: string = '未填';
-  @Param hoursText: string = '';
-  @Param selected: boolean = false;
-  @Param bg: string = '#FCFCFD';
-  @Param fg: string = '#475569';
-  /** 周末且未填 → 桌面版用粉红虚线提醒 */
-  @Param weekendEmpty: boolean = false;
-  @Event onPick: () => void = () => {
-  };
-
-  build() {
-    Column({ space: 1 }) {
-      Text(this.num.toString())
-        .fontSize(11)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.fg)
-      Text(this.midText)
-        .fontSize(9)
-        .fontColor(this.fg)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text(this.hoursText)
-        .fontSize(9)
-        .fontColor('#B45309')
-        .maxLines(1)
-    }
-    .width('100%')
-    .height(62)
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor(this.bg)
-    .borderRadius(9)
-    .border({
-      width: this.selected ? 2 : 1,
-      color: this.selected ? '#6366F1' : (this.weekendEmpty ? '#FDA29B' : '#E6E8F0')
-    })
-    .clip(true)
-    .onClick(() => this.onPick())
-  }
-}
-
-@ComponentV2
-struct SumRow {
-  @Param label: string = '';
-  @Param value: string = '';
-  @Param accent: string = C_TEXT;
-
-  build() {
-    Row() {
-      Text(this.label).fontSize(12).fontColor(C_SUB).layoutWeight(1)
-      Text(this.value).fontSize(15).fontWeight(FontWeight.Bold).fontColor(this.accent)
-    }
-    .width('100%')
-    .padding({ top: 4, bottom: 4 })
-  }
-}
-
-const TYPE_KEYS: string[] = ['wage', 'subsidy', 'fixed_allow', 'perday_allow'];
-const TYPE_SHORT: Map<string, string> = new Map<string, string>([
-  ['wage', '最低工资'],
-  ['subsidy', '补贴'],
-  ['fixed_allow', '固定'],
-  ['perday_allow', '按出勤']
-]);
-
-@ComponentV2
-struct PayRowView {
-  @Param name: string = '';
-  @Param type: string = 'wage';
-  @Param amountText: string = '0';
-  @Param subText: string = '0.00';
-  @Event onRename: (v: string) => void = (v: string) => {
-  };
-  @Event onAmount: (v: string) => void = (v: string) => {
-  };
-  @Event onType: (t: string) => void = (t: string) => {
-  };
-  @Event onDelete: () => void = () => {
-  };
-
-  private shortOf(t: string): string {
-    const s: string | undefined = TYPE_SHORT.get(t);
-    return s === undefined ? t : s;
-  }
-
-  private typeOptions(): SelectOption[] {
-    const out: SelectOption[] = [];
-    for (const t of TYPE_KEYS) {
-      const o: SelectOption = { value: this.shortOf(t) };
-      out.push(o);
-    }
-    return out;
-  }
-
-  private typeIndex(): number {
-    const i: number = TYPE_KEYS.indexOf(this.type);
-    return i < 0 ? 0 : i;
-  }
-
-  build() {
-    Row({ space: 6 }) {
-      Select(this.typeOptions())
-        .selected(this.typeIndex())
-        .value(this.shortOf(this.type))
-        .font({ size: 11 })
-        .optionFont({ size: 12 })
-        .height(30)
-        .width(90)
-        .backgroundColor('#00000000')
-        .onSelect((index: number) => {
-          this.onType(TYPE_KEYS[index]);
-        })
-
-      TextInput({ text: this.name })
-        .height(30)
-        .fontSize(12)
-        .layoutWeight(1)
-        .onChange((v: string) => this.onRename(v))
-      TextInput({ text: this.amountText })
-        .type(InputType.NUMBER_DECIMAL)
-        .height(30)
-        .fontSize(12)
-        .width(92)
-        .onChange((v: string) => this.onAmount(v))
-      Text(`¥ ${this.subText}`)
-        .fontSize(12)
-        .fontColor(C_TEXT)
-        .width(92)
-        .textAlign(TextAlign.End)
-      Text('✕')
-        .fontSize(13)
-        .fontColor(C_BAD)
-        .width(24)
-        .textAlign(TextAlign.Center)
-        .onClick(() => this.onDelete())
-    }
-    .width('100%')
-    .padding({ top: 3, bottom: 3 })
-  }
-}
-
-@ComponentV2
-struct OtRow {
-  @Param label: string = '';
-  @Param hours: string = '0';
-  @Param wage: string = '0.00';
-  @Param badge: string = '';
-  @Param badgeFg: string = '#15803D';
-  @Param badgeBg: string = '#DCFCE7';
-  @Event onEdit: (v: string) => void = (v: string) => {
-  };
-
-  build() {
-    Row({ space: 6 }) {
-      Text(this.label).fontSize(12).fontColor(C_SUB).width(76)
-      if (this.badge.length > 0) {
-        Text(this.badge)
-          .fontSize(9)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.badgeFg)
-          .backgroundColor(this.badgeBg)
-          .padding({ left: 5, right: 5, top: 1, bottom: 1 })
-          .borderRadius(6)
-      }
-      TextInput({ text: this.hours })
-        .type(InputType.NUMBER_DECIMAL)
-        .height(30)
-        .fontSize(12)
-        .width(64)
-        .onChange((v: string) => this.onEdit(v))
-      Text('h').fontSize(11).fontColor(C_HINT).width(12)
-      Text(`¥ ${this.wage}`).fontSize(12).fontColor(C_TEXT).layoutWeight(1).textAlign(TextAlign.End)
-    }
-    .width('100%')
-  }
-}
-
-@ComponentV2
-struct RoRow {
-  @Param label: string = '';
-  @Param value: string = '0.00';
-
-  build() {
-    Row() {
-      Text(this.label).fontSize(12).fontColor(C_SUB).layoutWeight(1)
-      Text(`¥ ${this.value}`).fontSize(12).fontColor(C_SUB)
-    }
-    .width('100%')
-  }
-}
-
-@ComponentV2
-struct AnnualRowView {
-  @Param month: number = 1;
-  @Param hasData: boolean = false;
-  @Param isTotal: boolean = false;
-  @Param workText: string = '—';
-  @Param otText: string = '—';
-  @Param leaveText: string = '—';
-  @Param gross: string = '—';
-  @Param deduct: string = '—';
-  @Param leaveDeduct: string = '—';
-  @Param takeHome: string = '—';
-  @Param companyCost: string = '—';
-  @Param legal: boolean = true;
-
-  private filled(): boolean {
-    return this.hasData || this.isTotal;
-  }
-
-  build() {
-    Row() {
-      Text(this.isTotal ? '合计' : `${this.month} 月`)
-        .fontSize(11)
-        .fontColor('#6B7280')
-        .fontWeight(this.isTotal ? FontWeight.Bold : FontWeight.Normal)
-        .width(60)
-        .textAlign(TextAlign.Center)
-      Text(this.filled() ? this.workText : '—')
-        .fontSize(11).fontColor(this.filled() ? '#0F172A' : '#9CA3AF')
-        .width(64).textAlign(TextAlign.End)
-      Text(this.filled() ? this.otText : '—')
-        .fontSize(11).fontColor(this.filled() ? '#0F172A' : '#9CA3AF')
-        .width(72).textAlign(TextAlign.End)
-      Text(this.filled() ? this.leaveText : '—')
-        .fontSize(11).fontColor(this.filled() ? '#0F172A' : '#9CA3AF')
-        .width(72).textAlign(TextAlign.End)
-      Text(this.filled() ? this.gross : '—')
-        .fontSize(11).fontColor(this.filled() ? '#0F172A' : '#9CA3AF')
-        .width(108).textAlign(TextAlign.End)
-      Text(this.filled() ? this.deduct : '—')
-        .fontSize(11).fontColor(this.filled() ? '#0F172A' : '#9CA3AF')
-        .width(108).textAlign(TextAlign.End)
-      Text(this.filled() ? this.leaveDeduct : '—')
-        .fontSize(11).fontColor(this.filled() ? '#0F172A' : '#9CA3AF')
-        .width(108).textAlign(TextAlign.End)
-      Text(this.filled() ? this.takeHome : '—')
-        .fontSize(11)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.filled() ? '#0F172A' : '#9CA3AF')
-        .width(108).textAlign(TextAlign.End)
-      Text(this.filled() ? this.companyCost : '—')
-        .fontSize(11).fontColor(this.filled() ? '#0F172A' : '#9CA3AF')
-        .width(108).textAlign(TextAlign.End)
-      Text(this.isTotal ? '' : (this.hasData ? (this.legal ? '合规' : '违法') : '—'))
-        .fontSize(11)
-        .fontWeight(this.hasData ? FontWeight.Bold : FontWeight.Normal)
-        .fontColor(this.hasData ? (this.legal ? '#0B7A3B' : '#C00000') : '#9CA3AF')
-        .width(72)
-        .textAlign(TextAlign.Center)
-    }
-    .width(900)
-    .padding({ top: 5, bottom: 5 })
-    .backgroundColor(this.isTotal ? '#F8FAFC' : '#FFFFFF')
-    .border({ width: { bottom: 1 }, color: '#F3F4F6' })
-  }
-}
-
-@ComponentV2
-struct UnitRowView {
-  @Param role: string = 'contract';
-  @Param roleLabel: string = '';
-  @Param codeLabel: string = '';
-  @Param name: string = '';
-  @Param code: string = '';
-  @Param locked: boolean = false;
-  /** 输入框自己持有文本：不直接绑 @Param，否则父组件一重绘就会把用户刚敲的字冲掉。 */
-  @Local nameText: string = '';
-  @Local codeText: string = '';
-  @Event onRename: (v: string) => void = (v: string) => {
-  };
-  @Event onCode: (v: string) => void = (v: string) => {
-  };
-  @Event onType: (k: string) => void = (k: string) => {
-  };
-  @Event onAction: (site: string) => void = (site: string) => {
-  };
-  @Event onDelete: () => void = () => {
-  };
-
-  aboutToAppear(): void {
-    this.nameText = this.name;
-    this.codeText = this.code;
-  }
-
-  private roleOptions(): SelectOption[] {
-    const out: SelectOption[] = [];
-    for (const k of UNIT_SELECTABLE_KEYS) {
-      const lab: string | undefined = UNIT_ROLE_LABELS.get(k);
-      const label: string = lab === undefined ? k : lab;
-      out.push({ value: label });
-    }
-    return out;
-  }
-
-  private roleIndex(): number {
-    const i: number = UNIT_SELECTABLE_KEYS.indexOf(this.role);
-    return i < 0 ? UNIT_SELECTABLE_KEYS.length - 1 : i;
-  }
-
-  /** 「🔍」菜单：先选站点再查（与桌面版 UNIT_SEARCH_SITES 一致）。 */
-  private searchMenu(): MenuElement[] {
-    const out: MenuElement[] = [];
-    out.push({
-      value: '国家企业信用信息公示系统', action: () => {
-        this.onAction('gsxt');
-      }
-    });
-    out.push({
-      value: '信用中国', action: () => {
-        this.onAction('credit');
-      }
-    });
-    return out;
-  }
-
-  build() {
-    Row({ space: 8 }) {
-      if (this.locked) {
-        // ⚠ 这里必须直接用 Text（@Builder 按值传参不刷新，会把旧文字一直显示下去）
-        Text(this.roleLabel.length > 0 ? this.roleLabel : '—')
-          .fontSize(12)
-          .fontColor('#667085')
-          .height(30)
-          .width(134)
-          .padding({ left: 8, right: 8 })
-          .backgroundColor('#F2F4F7')
-          .borderRadius(6)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .textAlign(TextAlign.Start)
-        Text(this.name.length > 0 ? this.name : '—')
-          .fontSize(12)
-          .fontColor('#667085')
-          .height(30)
-          .layoutWeight(1)
-          .padding({ left: 8, right: 8 })
-          .backgroundColor('#F2F4F7')
-          .borderRadius(6)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .textAlign(TextAlign.Start)
-        Text(this.code.length > 0 ? this.code : this.codeLabel)
-          .fontSize(12)
-          .fontColor('#667085')
-          .height(30)
-          .layoutWeight(1)
-          .padding({ left: 8, right: 8 })
-          .backgroundColor('#F2F4F7')
-          .borderRadius(6)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .textAlign(TextAlign.Start)
-      } else {
-        Select(this.roleOptions())
-          .selected(this.roleIndex())
-          .value(this.roleLabel)
-          .font({ size: 12 })
-          .optionWidth(220)
-          .width(134)
-          .height(30)
-          .fontColor('#0F172A')
-          .backgroundColor('#FFFFFF')
-          .onSelect((index: number, value?: string) => {
-            this.onType(UNIT_SELECTABLE_KEYS[index]);
-          })
-        TextInput({ text: this.nameText, placeholder: '单位名称' })
-          .height(30)
-          .fontSize(12)
-          .layoutWeight(1)
-          .fontColor('#0F172A')
-          .backgroundColor('#FFFFFF')
-          // 更新本地副本以便锁定→解锁后仍显示最新文字；同时上报父级
-          .onChange((v: string) => {
-            this.nameText = v;
-            this.onRename(v);
-          })
-          .onBlur(() => this.onRename(this.nameText))
-        TextInput({ text: this.codeText, placeholder: this.codeLabel })
-          .height(30)
-          .fontSize(12)
-          .layoutWeight(1)
-          .fontColor('#0F172A')
-          .backgroundColor('#FFFFFF')
-          .onChange((v: string) => {
-            this.codeText = v;
-            this.onCode(v);
-          })
-          .onBlur(() => this.onCode(this.codeText))
-      }
-      // 行尾动作：工资代发银行 = 「📋 复制」两个值；其它 = 「🔍 选站点去搜索」。两者都是只读动作，锁定时仍可用
-      if (this.role === 'bank') {
-        Button('📋')
-          .type(ButtonType.Normal)
-          .fontSize(12)
-          .height(28)
-          .width(34)
-          .padding(0)
-          .backgroundColor('#F8FAFC')
-          .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
-          .borderRadius(7)
-          .onClick(() => this.onAction('copy'))
-      } else {
-        Button('🔍')
-          .type(ButtonType.Normal)
-          .fontSize(12)
-          .height(28)
-          .width(34)
-          .padding(0)
-          .backgroundColor('#F8FAFC')
-          .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
-          .borderRadius(7)
-          .bindMenu(this.searchMenu())
-      }
-      if (this.locked) {
-        Text('').width(24)
-      } else {
-        Text('✕')
-          .fontSize(13)
-          .fontColor(C_BAD)
-          .width(24)
-          .textAlign(TextAlign.Center)
-          .onClick(() => this.onDelete())
-      }
-    }
-    .width('100%')
-    .padding({ top: 3, bottom: 3 })
-  }
-}
-
-@ComponentV2
-struct FieldRow {
-  @Param label: string = '';
-  @Param value: string = '';
-  @Param unit: string = '';
-  /** 字段下方小字提示（对应桌面版 secHint） */
-  @Param tip: string = '';
-  /** 是否锁定（仅 lockable 时有意义） */
-  @Param locked: boolean = false;
-  /** 是否显示 🔒/🔓 锁按钮（最低工资 / 加班基数 / 公积金基数） */
-  @Param lockable: boolean = false;
-  /** 覆盖锁按钮文案（默认用桌面版两条文案） */
-  @Param lockTitle: string = '';
-  /** 强制只读（如整月锁定） */
-  @Param disabled: boolean = false;
-  @Event onEdit: (v: string) => void = (v: string) => {
-  };
-  @Event onToggleLock: () => void = () => {
-  };
-
-  build() {
-    Column({ space: 3 }) {
-      Text(this.label).fontSize(11).fontColor('#667085').width('100%')
-      Row({ space: 8 }) {
-        TextInput({ text: this.value })
-          .type(InputType.NUMBER_DECIMAL)
-          .height(32)
-          .fontSize(13)
-          .layoutWeight(1)
-          .enabled(!this.locked && !this.disabled)
-          .backgroundColor(this.locked || this.disabled ? '#F5F7FA' : '#FFFFFF')
-          .fontColor(this.locked || this.disabled ? '#667085' : C_TEXT)
-          .onChange((v: string) => this.onEdit(v))
-        if (this.unit.length > 0) {
-          Text(this.unit).fontSize(11).fontColor(C_HINT)
-        }
-        if (this.lockable) {
-          Button(this.locked ? '🔒 已锁定 · 冻结当前值' : '🔓 已解锁 · 可手动修改')
-            .type(ButtonType.Normal)
-            .fontSize(10)
-            .height(28)
-            .padding({ left: 8, right: 8 })
-            .enabled(!this.disabled)
-            .backgroundColor(this.locked ? '#F5F7FA' : '#EEF2FF')
-            .fontColor(this.locked ? '#667085' : '#4F46E5')
-            .border({ width: 1, color: this.locked ? '#E6E8F0' : '#C7D2FE' })
-            .borderRadius(8)
-            .onClick(() => this.onToggleLock())
-        }
-      }
-      .width('100%')
-
-      if (this.tip.length > 0) {
-        Text(this.tip).fontSize(10).fontColor(C_HINT).width('100%')
-      }
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-  }
-}
-
+// ================= 可复用组件见 ./components.ets =================
 /** 参数模板的字段顺序（与桌面版 `_param_spins` 一致，序列化按此顺序）。 */
 const PARAM_KEYS: string[] = [
   'social_base', 'personal_social_rate', 'company_social_rate',
@@ -717,8 +168,6 @@ struct Index {
   @Local tplDlgMode: string = 'save';
   @Local tplDlgText: string = '';
   @Local tplDlgTitle: string = '';
-  /** 报表页 6 个分组卡的折叠状态（true = 展开） */
-  @Local groupOpen: boolean[] = [true, true, true, true, true, true];
 
   // 日历：当天两个输入框
   @Local selOt: string = '0';
@@ -742,12 +191,16 @@ struct Index {
   @Local copyYear: number = 0;
   @Local copyMonth: string = '1';
   @Local copyHint: string = '';
+  /** 清空考勤确认弹窗（桌面版 _clear_days 的确认框） */
+  @Local clearDlgOpen: boolean = false;
   /** 关于 / 免责声明对话框 */
   @Local aboutOpen: boolean = false;
   /** 当前月份是否锁定（= book.locked，只读） */
   @Local isLocked: boolean = false;
   /** 历史月份列表（侧栏） */
   @Local historyRows: HistRow[] = [];
+  /** Preferences 的真实沙箱目录（关于对话框展示用） */
+  @Local dataPath: string = '';
   // ---- API 配置（最低工资 / 节假日联网查询）----
   @Local apiUrl: string = '';
   @Local apiModel: string = '';
@@ -762,8 +215,6 @@ struct Index {
   private exporter: Exporter | null = null;
   /** 单位列表的 key 版本：锁定瞬间 +1，强制 ForEach 重建所有行（确保读最新值）。 */
   @Local rowsKey: number = 0;
-  /** 工作台「合规判定」卡实测高度：用于把右侧「公司每小时成本」卡拉到同高（桌面版 QHBoxLayout 行为）。 */
-  @Local cmpCardHeight: number = 0;
   /** 单位表写盘是否进行中 / 是否有新的待写内容。 */
   private unitsSaving: boolean = false;
   private unitsPending: boolean = false;
@@ -784,7 +235,13 @@ struct Index {
   private unitsDirty: boolean = false;
   private units: RelatedUnit[] = [];
   /** 本次运行内已载入过的月份（磁盘写失败也不会丢改动）。 */
-  private cache: Map<string, MonthBook> = new Map<string, MonthBook>();
+  private cache: BookCache = new BookCache(12);
+  /** 读取失败（JSON 损坏等）的月份：禁止写回，避免覆盖原数据。 */
+  private corruptMonths: Set<string> = new Set<string>();
+  /** 已锁定月份（与月份正文分开存，历史列表不再需要读每个月）。 */
+  private lockedMonths: Set<string> = new Set<string>();
+  /** API 配置读取失败原因（解密/解析），空表示正常。 */
+  @Local apiKeyError: string = '';
 
   private book: MonthBook = createBook(2026, 11);
   private groups: NavGroup[] = [
@@ -809,14 +266,24 @@ struct Index {
     this.flushSave();
   }
 
-  /** 启动加载。HUKS 只有异步接口，所以整条链路都是 Promise。 */
+  /** 启动加载。Preferences 读写都是异步的。 */
   private async initData(): Promise<void> {
     const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.dataPath = ctx.preferencesDir;
     this.store = new MonthStorage(ctx);
     this.settings = new SettingsStorage(ctx);
     this.exporter = new Exporter(ctx);
     const keyOk: boolean = await this.settings.warmUp();
-    hilog.info(0x0000, 'ATTD', 'key ready=%{public}s err=%{public}s', String(keyOk), this.settings.cryptoError());
+    hilog.info(0x0000, 'ATTD', 'api key crypto ready=%{public}s err=%{public}s',
+      String(keyOk), this.settings.cryptoError());
+    const lockedTxt: string = await this.settings.loadLockedMonths();
+    if (lockedTxt.length > 0) {
+      for (const k of lockedTxt.split(',')) {
+        if (k.length > 0) {
+          this.lockedMonths.add(k);
+        }
+      }
+    }
     await this.loadUnits();
     await this.importSeedIfNeeded();
     const st = this.store;
@@ -827,7 +294,13 @@ struct Index {
     const loaded: MonthBook | null = await st.loadMonth(y, m);
     if (loaded !== null) {
       this.book = loaded;
-      this.saveState = st.cryptoOk() ? `已读取 ${key}` : `已读取 ${key}（未加密：${st.cryptoError()}）`;
+      this.corruptMonths.delete(key);
+      this.saveState = `已读取 ${key}`;
+    } else if (st.hasMonth(y, m)) {
+      // 存档解析失败：当成新月份显示，但**禁止写回**，避免覆盖原数据
+      this.book = createBook(y, m, '', true);
+      this.corruptMonths.add(key);
+      this.saveState = `⚠ ${key} 读取失败（${st.lastError || '格式异常'}），已保护原数据不被覆盖`;
     } else {
       // 新建月份带常用工资项（金额 0），与桌面版从 UI 新建月一致；不自动落盘
       this.book = createBook(y, m, '', true);
@@ -835,6 +308,11 @@ struct Index {
     }
     this.cache.set(this.monthKey(this.book.year, this.book.month), this.book);
     this.isLocked = this.book.locked;
+    if (this.isLocked) {
+      // 账本里的锁是权威值（老存档里可能只有账本记了锁）
+      this.lockedMonths.add(key);
+      this.saveLockedState();
+    }
     this.loadParamsForm();
     await this.loadWorkRegion();
     await this.refreshTemplates();
@@ -846,8 +324,8 @@ struct Index {
   /**
    * 唯一重算入口（persist=true 时**调度**落盘）。
    *
-   * ⚠ 不能在这里直接写盘：HUKS 加密是异步的，连续输入会并发多个 saveMonth，
-   * 加密耗时不均 → 后完成的「旧快照」可能覆盖「新快照」（数据丢失）。
+   * ⚠ 不能在这里直接写盘：Preferences 的落盘是异步的，连续输入会并发多个 saveMonth，
+   * 完成顺序不定 → 后完成的「旧快照」可能覆盖「新快照」（数据丢失）。
    * 因此这里只做 400ms 防抖 + 串行写（与相关单位页同一套模式）。
    */
   private refresh(persist: boolean = true): void {
@@ -893,6 +371,12 @@ struct Index {
     // 固定住这本书：写盘是异步的，期间可能已经切月（this.book 变新对象）
     const book: MonthBook = this.book;
     const key: string = this.monthKey(book.year, book.month);
+    if (this.corruptMonths.has(key)) {
+      this.saving = false;
+      this.savePending = false;
+      this.saveState = `⚠ ${key} 读取失败，已跳过保存（不覆盖原数据）`;
+      return;
+    }
     this.cache.set(key, book);
     if (st === null) {
       this.savePending = false;
@@ -912,9 +396,7 @@ struct Index {
         return;
       }
       if (!this.holdStatus()) {
-        this.saveState = ok
-          ? (st.cryptoOk() ? `已保存 ${key}（加密）` : `已保存 ${key}（未加密：${st.cryptoError()}）`)
-          : `仅内存（${st.lastError}）`;
+        this.saveState = ok ? `已保存 ${key}` : `仅内存（${st.lastError}）`;
       }
       this.afterSave();
     }).catch((e: Error) => {
@@ -997,7 +479,12 @@ struct Index {
     }
     if (next !== null) {
       this.book = next;
-      this.saveState = (st !== null && !st.cryptoOk()) ? `已读取 ${key}（未加密：${st.cryptoError()}）` : `已读取 ${key}`;
+      this.corruptMonths.delete(key);
+      this.saveState = `已读取 ${key}`;
+    } else if (st !== null && st.hasMonth(y, m)) {
+      this.book = createBook(y, m, '', true);
+      this.corruptMonths.add(key);
+      this.saveState = `⚠ ${key} 读取失败（${st.lastError || '格式异常'}），已保护原数据不被覆盖`;
     } else {
       this.book = createBook(y, m, '', true);
       this.saveState = '新月份（未保存）';
@@ -1015,6 +502,10 @@ struct Index {
 
   // ================= 数据操作 =================
   private selectDay(d: number): void {
+    // 月份锁定：日期格不可点（桌面版 _set_calendar_locked 把每个格子 setEnabled(False)）
+    if (this.isLocked) {
+      return;
+    }
     this.snap = Snap.from(this.book, d);
     this.selOt = this.book.day(d).overtime_hours.toString();
     this.selLeave = this.book.day(d).leave_hours.toString();
@@ -1157,10 +648,17 @@ struct Index {
     this.setBusinessState(`✨ 一键铺完成：工作日上班 ${workCount} 天，周末休息 ${restCount} 天（已填日期未覆盖）`);
   }
 
+  /** 「清空考勤」入口：锁定时只提示不执行，未锁定先弹确认（桌面版 `_clear_days`）。 */
   private clearAttendance(): void {
     if (this.isLocked) {
+      this.setBusinessState(`月份已锁定，无法清空考勤（先点 🔓 解锁 ${this.book.year} 年 ${this.book.month} 月）`);
       return;
     }
+    this.clearDlgOpen = true;
+  }
+
+  /** 确认后真正清空：状态 / 标记 / 加班 / 请假全部归零。 */
+  private doClearAttendance(): void {
     for (const d of this.book.days) {
       d.status = '';
       d.mark = 0;
@@ -1169,10 +667,64 @@ struct Index {
     }
     this.selOt = '0';
     this.selLeave = '0';
+    this.clearDlgOpen = false;
     this.refresh();
+    this.setBusinessState('已清空本月考勤（状态 / 标记 / 加班 / 请假）');
   }
 
   // ================= 参数页：输入 → 模型 =================
+  /** 参数页任一字段输入：先同步表单字符串（输入框不回跳），再写模型（applyParam 内含锁定守卫）。 */
+  private onParamEdit(key: string, v: string): void {
+    switch (key) {
+      case 'social_base':
+        this.fSocialBase = v;
+        break;
+      case 'personal_social_rate':
+        this.fPersonalSocialRate = v;
+        break;
+      case 'company_social_rate':
+        this.fCompanySocialRate = v;
+        break;
+      case 'personal_fund_rate':
+        this.fPersonalFundRate = v;
+        break;
+      case 'company_fund_rate':
+        this.fCompanyFundRate = v;
+        break;
+      case 'fund_base':
+        this.fFundBase = v;
+        break;
+      case 'min_wage':
+        this.fMinWage = v;
+        break;
+      case 'parttime_min':
+        this.fParttimeMin = v;
+        break;
+      case 'overtime_base':
+        this.fOvertimeBase = v;
+        break;
+      case 'hours_per_day':
+        this.fHoursPerDay = v;
+        break;
+      case 'agreed_work_days':
+        this.fAgreedDays = v;
+        break;
+      default:
+        break;
+    }
+    this.applyParam(key, v);
+  }
+
+  /** 备注 / 姓名输入（直接写 book.note）。 */
+  private onNoteEdit(v: string): void {
+    if (this.isLocked) {
+      return;
+    }
+    this.fNote = v;
+    this.book.note = v;
+    this.refresh();
+  }
+
   private applyParam(key: string, text: string): void {
     if (this.isLocked) {
       return;
@@ -1181,31 +733,10 @@ struct Index {
     if (isNaN(v)) {
       return;
     }
-    const b: MonthBook = this.book;
-    if (key === 'social_base') {
-      b.social_base = v;
-    } else if (key === 'personal_social_rate') {
-      b.personal_social_rate = v;
-    } else if (key === 'company_social_rate') {
-      b.company_social_rate = v;
-    } else if (key === 'fund_base') {
-      b.fund_base = v;
-    } else if (key === 'personal_fund_rate') {
-      b.personal_fund_rate = v;
-    } else if (key === 'company_fund_rate') {
-      b.company_fund_rate = v;
-    } else if (key === 'min_wage') {
-      b.min_wage = v;
+    this.setParamNum(key, v);
+    if (key === 'min_wage') {
       // 桌面版：min_wage 变化 → 同步「加班费计算基数 / 公积金缴费基数」（仅限各自处于锁定态时）
       this.syncDerivedFromMinWage();
-    } else if (key === 'parttime_min') {
-      b.parttime_min = v;
-    } else if (key === 'overtime_base') {
-      b.overtime_base = v;
-    } else if (key === 'agreed_work_days') {
-      b.agreed_work_days = v;
-    } else if (key === 'hours_per_day') {
-      b.hours_per_day = v;
     }
     this.refresh();
   }
@@ -1242,8 +773,7 @@ struct Index {
     if (this.isLocked) {
       return;
     }
-    const r: Result = compute(this.book);
-    const v: number = r.counts.normal_labor_days;
+    const v: number = countAttendance(this.book).normal_labor_days;
     this.book.agreed_work_days = v;
     this.fAgreedDays = `${v}`;
     this.refresh();
@@ -1252,56 +782,60 @@ struct Index {
 
   private paramNum(key: string): number {
     const b: MonthBook = this.book;
-    if (key === 'social_base') {
-      return b.social_base;
-    } else if (key === 'personal_social_rate') {
-      return b.personal_social_rate;
-    } else if (key === 'company_social_rate') {
-      return b.company_social_rate;
-    } else if (key === 'personal_fund_rate') {
-      return b.personal_fund_rate;
-    } else if (key === 'company_fund_rate') {
-      return b.company_fund_rate;
-    } else if (key === 'fund_base') {
-      return b.fund_base;
-    } else if (key === 'min_wage') {
-      return b.min_wage;
-    } else if (key === 'parttime_min') {
-      return b.parttime_min;
-    } else if (key === 'overtime_base') {
-      return b.overtime_base;
-    } else if (key === 'hours_per_day') {
-      return b.hours_per_day;
-    } else if (key === 'agreed_work_days') {
-      return b.agreed_work_days;
+    switch (key) {
+      case 'social_base': return b.social_base;
+      case 'personal_social_rate': return b.personal_social_rate;
+      case 'company_social_rate': return b.company_social_rate;
+      case 'personal_fund_rate': return b.personal_fund_rate;
+      case 'company_fund_rate': return b.company_fund_rate;
+      case 'fund_base': return b.fund_base;
+      case 'min_wage': return b.min_wage;
+      case 'parttime_min': return b.parttime_min;
+      case 'overtime_base': return b.overtime_base;
+      case 'hours_per_day': return b.hours_per_day;
+      case 'agreed_work_days': return b.agreed_work_days;
+      default: return 0;
     }
-    return 0;
   }
 
   private setParamNum(key: string, v: number): void {
     const b: MonthBook = this.book;
-    if (key === 'social_base') {
-      b.social_base = v;
-    } else if (key === 'personal_social_rate') {
-      b.personal_social_rate = v;
-    } else if (key === 'company_social_rate') {
-      b.company_social_rate = v;
-    } else if (key === 'personal_fund_rate') {
-      b.personal_fund_rate = v;
-    } else if (key === 'company_fund_rate') {
-      b.company_fund_rate = v;
-    } else if (key === 'fund_base') {
-      b.fund_base = v;
-    } else if (key === 'min_wage') {
-      b.min_wage = v;
-    } else if (key === 'parttime_min') {
-      b.parttime_min = v;
-    } else if (key === 'overtime_base') {
-      b.overtime_base = v;
-    } else if (key === 'hours_per_day') {
-      b.hours_per_day = v;
-    } else if (key === 'agreed_work_days') {
-      b.agreed_work_days = v;
+    switch (key) {
+      case 'social_base':
+        b.social_base = v;
+        break;
+      case 'personal_social_rate':
+        b.personal_social_rate = v;
+        break;
+      case 'company_social_rate':
+        b.company_social_rate = v;
+        break;
+      case 'personal_fund_rate':
+        b.personal_fund_rate = v;
+        break;
+      case 'company_fund_rate':
+        b.company_fund_rate = v;
+        break;
+      case 'fund_base':
+        b.fund_base = v;
+        break;
+      case 'min_wage':
+        b.min_wage = v;
+        break;
+      case 'parttime_min':
+        b.parttime_min = v;
+        break;
+      case 'overtime_base':
+        b.overtime_base = v;
+        break;
+      case 'hours_per_day':
+        b.hours_per_day = v;
+        break;
+      case 'agreed_work_days':
+        b.agreed_work_days = v;
+        break;
+      default:
+        break;
     }
   }
 
@@ -1401,6 +935,11 @@ struct Index {
   }
 
   private openTplDialog(mode: string): void {
+    // 没有模板时**不弹对话框**，直接提示（桌面版 _rename_template / _delete_template 同口径）
+    if (mode !== 'save' && this.tplSel.length === 0) {
+      this.tplHint = mode === 'delete' ? '还没有可删除的模板' : '还没有可重命名的模板';
+      return;
+    }
     this.tplDlgMode = mode;
     if (mode === 'save') {
       this.tplDlgTitle = '保存参数模板';
@@ -1439,6 +978,7 @@ struct Index {
   }
 
   private async saveTemplate(name: string): Promise<void> {
+    // 月份锁定时静默返回：锁定时参数页本就不允许改数，弹提示反而是噪音
     if (this.isLocked) {
       return;
     }
@@ -1646,43 +1186,7 @@ struct Index {
     });
   }
 
-  // ---- 最低工资：按省 / 地区选（内置表，来自桌面版导出） ----
-  private provinceMenu(): MenuElement[] {
-    const out: MenuElement[] = [];
-    for (const p of MIN_WAGE_PROVINCES) {
-      const item: MenuElement = {
-        value: p,
-        action: () => {
-          this.pickProvince(p);
-        }
-      };
-      out.push(item);
-    }
-    return out;
-  }
-
-  private regionMenu(): MenuElement[] {
-    const out: MenuElement[] = [];
-    if (this.fProvince.length === 0) {
-      const tip: MenuElement = {
-        value: '请先选择省份',
-        action: () => {
-        }
-      };
-      out.push(tip);
-      return out;
-    }
-    for (const r of minWageRegions(this.fProvince)) {
-      const item: MenuElement = {
-        value: r,
-        action: () => {
-          this.pickRegion(r);
-        }
-      };
-      out.push(item);
-    }
-    return out;
-  }
+  // ---- 最低工资：按省 / 地区选（菜单在 ParamsPage 里，这里只管数据与落盘） ----
 
   /**
    * 选省份（桌面版 `_on_province_changed` 同口径）：
@@ -1859,43 +1363,6 @@ struct Index {
     return '全年 12 个月考勤与工资一览，可导出 Excel';
   }
 
-  private cellKey(c: CalCell): string {
-    const sel: string = c.day === this.snap.selDay ? 'S' : 'n';
-    return `${c.day}-${c.status}-${c.mark}-${sel}`;
-  }
-
-  private rowKey(week: CalCell[]): string {
-    let s: string = `sel${this.snap.selDay}`;
-    for (const c of week) {
-      s = s + '|' + c.day + c.status + c.mark;
-    }
-    return s;
-  }
-
-  private chipActive(label: string): boolean {
-    return this.snap.selStatus === label;
-  }
-
-  private lineColor(kind: string, bold: boolean): string {
-    if (kind === 'ok') {
-      return '#0B7A3B';
-    } else if (kind === 'bad') {
-      return '#C00000';
-    } else if (kind === 'sec') {
-      return '#7C8AA5';
-    } else if (bold) {
-      return '#1D4ED8';
-    }
-    return '#0F172A';
-  }
-
-  private lineBold(kind: string, bold: boolean): FontWeight {
-    if (kind === 'ok' || kind === 'bad' || kind === 'sec' || bold) {
-      return FontWeight.Bold;
-    }
-    return FontWeight.Normal;
-  }
-
   // ================= 薪酬页：数据操作 =================
   private addPayItem(): void {
     if (this.isLocked) {
@@ -1916,26 +1383,7 @@ struct Index {
     return false;
   }
 
-  /** 某类目下还没添加的可选项数量（菜单里显示「可选 N 项」）。 */
-  private catalogLeft(type: string): number {
-    let left: number = 0;
-    for (const g of PAYITEM_GROUPS) {
-      if (g.type !== type) {
-        continue;
-      }
-      for (const n of g.items) {
-        if (!this.hasPayItem(n)) {
-          left = left + 1;
-        }
-      }
-    }
-    return left;
-  }
-
-  private payItemMenuText(name: string): string {
-    return this.hasPayItem(name) ? `✓ ${name}（已添加）` : name;
-  }
-
+  /** 某一类目下还没添加的可选项数量（已搬到 SalaryPage，外壳只保留数据操作）。 */
   private addPayItemNamed(name: string, type: string): void {
     if (this.isLocked) {
       return;
@@ -1989,25 +1437,7 @@ struct Index {
     }
   }
 
-  /** 工资项类型下拉菜单（桌面版：单个 chip 按钮带菜单，非 4 个并排）。 */
-  private rowTypeMenu(p: PayRow): MenuElement[] {
-    const out: MenuElement[] = [];
-    for (const c of TYPE_CHIPS) {
-      const item: MenuElement = {
-        value: p.type === c.key ? `${c.short}  ✓` : c.short,
-        action: () => {
-          this.setPayType(p.index, c.key);
-        }
-      };
-      out.push(item);
-    }
-    return out;
-  }
-
-  private chipOf(t: string): TypeChip {
-    return typeChipOf(t);
-  }
-
+  /** 工资项类型下拉菜单在 SalaryPage 里生成（这里只管改类型）。 */
   private setOtHours(kind: string, v: string): void {
     if (this.isLocked) {
       return;
@@ -2103,16 +1533,18 @@ struct Index {
     for (let m = 1; m <= 12; m++) {
       const row: AnnualRow = new AnnualRow();
       row.month = m;
-      // 只统计「真的已存档」的月份 —— 否则未保存的新月份会用演示数据污染年度汇总
-      if (st === null || !st.hasMonth(year, m)) {
+      if (st === null) {
         rows.push(row);
         continue;
       }
-      let b: MonthBook | null = this.cache.get(this.monthKey(year, m)) ?? null;
-      if (b === null && st !== null) {
+      // 未存档月份 loadMonth 直接返回 null（不再先 hasMonth 多读一次）：
+      // 只统计「真的已存档」的月份，否则未保存的新月份会用演示数据污染年度汇总
+      const key: string = this.monthKey(year, m);
+      let b: MonthBook | null = this.cache.get(key) ?? null;
+      if (b === null) {
         b = await st.loadMonth(year, m);
         if (b !== null) {
-          this.cache.set(this.monthKey(year, m), b);
+          this.cache.set(key, b);
         }
       }
       if (b === null) {
@@ -2166,7 +1598,7 @@ struct Index {
   }
 
   // ================= 相关单位（数据）=================
-  /** 首次启动把打包的种子月份写入加密存档（测试用；导入一次后写标记）。 */
+  /** 首次启动把打包的种子月份写入存档（测试用；导入一次后写标记）。 */
   private async importSeedIfNeeded(): Promise<void> {
     const store = this.store;
     const settings = this.settings;
@@ -2184,11 +1616,14 @@ struct Index {
       const items: SeedMonth[] = JSON.parse(text) as SeedMonth[];
       for (const it of items) {
         const b: MonthBook = MonthBook.fromDict(it.book);
+        // 不覆盖已有月份（旧数据升级时种子文件可能还在）
+        if (store.hasMonth(b.year, b.month)) {
+          continue;
+        }
         await store.saveMonth(b);
       }
       await settings.saveText('seed_imported', '1');
-      hilog.info(0x0000, 'ATTD', 'seed imported %{public}d months ok=%{public}s',
-        items.length, String(store.cryptoOk()));
+      hilog.info(0x0000, 'ATTD', 'seed imported %{public}d months', items.length);
     } catch (e) {
       hilog.info(0x0000, 'ATTD', 'seed import failed: %{public}s', `${e}`);
     }
@@ -2206,7 +1641,7 @@ struct Index {
     } else {
       try {
         this.units = unitsFromJson(JSON.parse(text) as UnitDict[]);
-        this.unitsState = st.cryptoOk() ? `已读取 ${this.units.length} 家` : `已读取 ${this.units.length} 家（未加密：${st.cryptoError()}）`;
+        this.unitsState = `已读取 ${this.units.length} 家`;
       } catch (e) {
         this.units = defaultUnits();
         this.unitsState = `读取失败：${e}`;
@@ -2221,8 +1656,8 @@ struct Index {
 
   /**
    * 保存单位表。
-   * HUKS 加密是异步且较慢的，名称/编号是「每敲一个字」都会触发保存，
-   * 所以这里做两件事：输入用防抖（scheduleUnitsSave），写盘串行化（避免并发互相覆盖）。
+   * 名称/编号是「每敲一个字」都会触发保存，所以这里做两件事：
+   * 输入用防抖（scheduleUnitsSave），写盘串行化（避免并发互相覆盖）。
    */
   private persistUnits(): void {
     const st = this.settings;
@@ -2243,7 +1678,7 @@ struct Index {
       hilog.info(0x0000, 'ATTD', 'units save ok=%{public}s len=%{public}d err=%{public}s',
         String(ok), text.length, st.lastError);
       if (ok) {
-        this.unitsState = st.cryptoOk() ? '已保存（加密）' : `已保存（未加密：${st.cryptoError()}）`;
+        this.unitsState = '已保存';
       } else {
         this.unitsState = `仅内存（${st.lastError}）`;
       }
@@ -2262,7 +1697,7 @@ struct Index {
     });
   }
 
-  /** 输入防抖：停止输入 500ms 后才真正落盘，避免每次按键都发起一次 HUKS 加密。 */
+  /** 输入防抖：停止输入 500ms 后才真正落盘，避免每次按键都写盘。 */
   private scheduleUnitsSave(): void {
     if (this.unitsTimer >= 0) {
       clearTimeout(this.unitsTimer);
@@ -2327,20 +1762,6 @@ struct Index {
     }
     this.units.splice(pos, 0, new RelatedUnit(r, '', ''));
     this.afterUnitsChanged();
-  }
-
-  private addUnitMenu(): MenuElement[] {
-    const out: MenuElement[] = [];
-    for (const k of UNIT_SELECTABLE_KEYS) {
-      const lab: string | undefined = UNIT_ROLE_LABELS.get(k);
-      const label: string = lab === undefined ? k : lab;
-      out.push({
-        value: label, action: () => {
-          this.addUnit(k);
-        }
-      });
-    }
-    return out;
   }
 
   private copyText(t: string): void {
@@ -2423,13 +1844,13 @@ struct Index {
   private async loadApiConfig(): Promise<void> {
     const st = this.settings;
     if (st !== null) {
-      const line: string | null = await st.loadText('api_config');
-      if (line !== null && line.length > 0) {
-        const cells: string[] = line.split('\n');
-        this.apiUrl = cells.length > 0 ? cells[0] : '';
-        this.apiModel = cells.length > 1 ? cells[1] : '';
-        this.apiKey = cells.length > 2 ? cells[2] : '';
-      }
+      const cfg: ApiStored = await st.loadApiConfig();
+      this.apiUrl = cfg.url;
+      this.apiModel = cfg.model;
+      this.apiKey = cfg.key;
+      // key 为空但确实有配置 → 多半是解密/解析失败，把原因留着给用户看
+      const failed: boolean = cfg.url.length > 0 && st.lastError.length > 0;
+      this.apiKeyError = failed ? st.lastError : '';
     }
     this.refreshApiHint();
   }
@@ -2439,8 +1860,8 @@ struct Index {
     if (st === null) {
       return false;
     }
-    const text: string = `${this.apiUrl.trim()}\n${this.apiModel.trim()}\n${this.apiKey.trim()}`;
-    const ok: boolean = await st.saveText('api_config', text);
+    const ok: boolean = await st.saveApiConfig(this.apiUrl.trim(), this.apiModel.trim(), this.apiKey.trim());
+    this.apiKeyError = ok && st.lastError.length > 0 ? st.lastError : '';
     this.refreshApiHint();
     return ok;
   }
@@ -2450,9 +1871,16 @@ struct Index {
     if (url.length > 0) {
       const model: string = this.apiModel.trim().length > 0
         ? this.apiModel.trim() : '（未填，联网查询会失败）';
-      const keyTag: string = this.apiKey.trim().length > 0 ? '已填 Key' : '无 Key（供不校验 Key 的网关）';
-      this.apiHint = `✅ 已配置 API：${url} · 模型 ${model} · ${keyTag}\n` +
+      const keyTag: string = this.apiKey.trim().length > 0
+        ? (this.settings !== null && this.settings.cryptoOk()
+          ? 'Key 已填（HUKS 加密）' : 'Key 已填（未加密）')
+        : '无 Key（供不校验 Key 的网关）';
+      let hint: string = `✅ 已配置 API：${url} · 模型 ${model} · ${keyTag}\n` +
         '「🌐 联网查询」「🌐 API 一键铺」会用它；点「📋 用本地表」则完全不联网';
+      if (this.apiKeyError.length > 0) {
+        hint += `\n⚠ ${this.apiKeyError}`;
+      }
+      this.apiHint = hint;
     } else {
       this.apiHint = 'ℹ️ 未配置 API：最低工资/节假日都用内置官方表；未公布年份（如次年）可配 API 后用「🌐 联网查询」获取';
     }
@@ -2475,14 +1903,24 @@ struct Index {
     return out;
   }
 
-  private confirmApiDialog(): void {
+  private async confirmApiDialog(): Promise<void> {
+    if (this.isLocked) {
+      // 月份锁定 = 参数页只读：对话框若在锁定前就开着也不许写（静默关闭）
+      this.apiDlgOpen = false;
+      return;
+    }
     const u: string = this.apiUrl.trim();
     if (u.length > 0 && !u.toLowerCase().startsWith('https://')) {
       this.apiTestState = '为保护 API Key 传输安全，API 地址必须以 https:// 开头';
       return;
     }
     this.apiTestState = '';
-    this.saveApiConfig();
+    const ok: boolean = await this.saveApiConfig();
+    if (!ok) {
+      // 留在弹窗里显示原因，避免"点了保存却什么都没发生"
+      this.apiTestState = `保存失败：${this.apiKeyError.length > 0 ? this.apiKeyError : '未知原因'}`;
+      return;
+    }
     this.apiDlgOpen = false;
   }
 
@@ -2589,6 +2027,7 @@ struct Index {
   }
 
   // ================= 月份：历史列表 / 锁定 / 删除 =================
+  /** 历史列表只读月份键 + 锁定集合，不再为拿 locked 去解析每个月正文。 */
   private async refreshHistory(): Promise<void> {
     const st = this.store;
     const rows: HistRow[] = [];
@@ -2601,19 +2040,8 @@ struct Index {
         const row: HistRow = new HistRow();
         row.y = y;
         row.m = m;
-        if (y === this.book.year && m === this.book.month) {
-          row.locked = this.book.locked;
-          row.current = true;
-        } else {
-          let b: MonthBook | null = this.cache.get(k) ?? null;
-          if (b === null) {
-            b = await st.loadMonth(y, m);
-            if (b !== null) {
-              this.cache.set(k, b);
-            }
-          }
-          row.locked = b !== null && b.locked;
-        }
+        row.current = (y === this.book.year && m === this.book.month);
+        row.locked = row.current ? this.book.locked : this.lockedMonths.has(k);
         row.label = `${y} 年 ${m} 月`;
         rows.push(row);
       }
@@ -2621,6 +2049,18 @@ struct Index {
     // 新的月份排在前面（与桌面版侧栏一致）
     rows.sort((a: HistRow, b: HistRow): number => (b.y * 100 + b.m) - (a.y * 100 + a.m));
     this.historyRows = rows;
+  }
+
+  /** 把锁定月份集合写回设置（单键）。 */
+  private saveLockedState(): void {
+    const st = this.settings;
+    if (st === null) {
+      return;
+    }
+    const keys: string[] = [];
+    this.lockedMonths.forEach((k: string) => keys.push(k));
+    keys.sort();
+    st.saveLockedMonths(keys.join(','));
   }
 
   /** 切换到指定年月（读存档；无存档则新建带常用工资项的空账本）。 */
@@ -2637,13 +2077,27 @@ struct Index {
     }
     if (next !== null) {
       this.book = next;
-      this.saveState = (st !== null && !st.cryptoOk()) ? `已读取 ${key}（未加密）` : `已读取 ${key}`;
+      this.corruptMonths.delete(key);
+      this.saveState = `已读取 ${key}`;
+    } else if (st !== null && st.hasMonth(y, m)) {
+      this.book = createBook(y, m, '', true);
+      this.corruptMonths.add(key);
+      this.saveState = `⚠ ${key} 读取失败（${st.lastError || '格式异常'}），已保护原数据不被覆盖`;
     } else {
       this.book = createBook(y, m, '', true);
       this.saveState = '新月份（未保存）';
     }
     this.cache.set(key, this.book);
     this.isLocked = this.book.locked;
+    // 账本里的 locked 是权威值：顺手把锁定集合对齐（老存档里可能有锁但集合没记）
+    if (this.book.locked !== this.lockedMonths.has(key)) {
+      if (this.book.locked) {
+        this.lockedMonths.add(key);
+      } else {
+        this.lockedMonths.delete(key);
+      }
+      this.saveLockedState();
+    }
     this.loadParamsForm();
     this.snap = Snap.from(this.book, 1);
     this.selOt = this.book.day(1).overtime_hours.toString();
@@ -2677,8 +2131,15 @@ struct Index {
   private toggleMonthLock(): void {
     const b: MonthBook = this.book;
     const next: boolean = !b.locked;
+    const key: string = this.monthKey(b.year, b.month);
     b.locked = next;
     this.isLocked = next;
+    if (next) {
+      this.lockedMonths.add(key);
+    } else {
+      this.lockedMonths.delete(key);
+    }
+    this.saveLockedState();
     this.persist();
     this.refreshHistory();
     this.saveState = next ? `已锁定 ${b.year}-${pad2(b.month)} · 只读` : `已解锁 ${b.year}-${pad2(b.month)}`;
@@ -2696,6 +2157,10 @@ struct Index {
       b = await st.loadMonth(y, m);
     }
     if (b === null) {
+      if (st.hasMonth(y, m)) {
+        this.corruptMonths.add(key);
+        this.saveState = `⚠ ${key} 读取失败，未修改（原数据未动）`;
+      }
       return;
     }
     b.locked = locked;
@@ -2705,6 +2170,12 @@ struct Index {
       return;
     }
     this.cache.set(key, b);
+    if (locked) {
+      this.lockedMonths.add(key);
+    } else {
+      this.lockedMonths.delete(key);
+    }
+    this.saveLockedState();
     if (b.year === this.book.year && b.month === this.book.month) {
       this.book.locked = locked;
       this.isLocked = locked;
@@ -2734,6 +2205,9 @@ struct Index {
       return;
     }
     this.cache.delete(this.monthKey(y, m));
+    this.corruptMonths.delete(this.monthKey(y, m));
+    this.lockedMonths.delete(this.monthKey(y, m));
+    this.saveLockedState();
     this.book = createBook(y, m, '', true);
     this.isLocked = false;
     this.loadParamsForm();
@@ -2804,6 +2278,11 @@ struct Index {
     if (!ok) {
       this.copyHint = `保存失败：${st.lastError}`;
       return;
+    }
+    if (created) {
+      // 目标月是新建的，不可能被锁；顺手清掉遗留的锁记录
+      this.lockedMonths.delete(key);
+      this.saveLockedState();
     }
     this.copyDlgOpen = false;
     this.saveState = `已${created ? '新建' : '覆盖'} ${y} 年 ${m} 月（工资项已复制）`;
@@ -2940,7 +2419,7 @@ struct Index {
           ListItem() {
             Row({ space: 4 }) {
               if (r.locked) {
-                Text('🔒').fontSize(10)
+                Text('🔒').fontSize(11)
               }
               Text(r.label)
                 .fontSize(12)
@@ -2951,7 +2430,7 @@ struct Index {
             .width('100%')
             .padding({ left: 10, right: 8, top: 6, bottom: 6 })
             .borderRadius(7)
-            .backgroundColor(r.current ? '#EEF2FF' : '#00000000')
+            .backgroundColor(r.current ? C_SEL_BG : '#00000000')
             .onClick(() => this.goMonth(r.y, r.m))
             .bindContextMenu(this.histMenu(r), ResponseType.RightClick)
           }
@@ -2960,6 +2439,16 @@ struct Index {
       .layoutWeight(1)
       .width('100%')
       .scrollBar(BarState.Auto)
+
+      // 底部：数据实际存放位置（与桌面版侧栏一致）
+      Text(`数据：${this.dataPath.length > 0 ? this.dataPath : '—'}`)
+        .fontSize(11)
+        .fontColor(C_HINT)
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 8, bottom: 6 })
+        .maxLines(3)
+        .wordBreak(WordBreak.BREAK_ALL)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width(208)
     .height('100%')
@@ -2999,8 +2488,8 @@ struct Index {
         .height(30)
         .padding({ left: 12, right: 12 })
         .backgroundColor('#FFFFFF')
-        .fontColor('#667085')
-        .border({ width: 1, color: '#E6E8F0' })
+        .fontColor(C_LABEL)
+        .border({ width: 1, color: C_LINE })
         .borderRadius(8)
         .onClick(() => {
           this.aboutOpen = true;
@@ -3024,7 +2513,7 @@ struct Index {
           .height(32)
           .backgroundColor('#FFFFFF')
           .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
+          .border({ width: 1, color: C_LINE })
           .borderRadius(8)
           .onClick(() => this.changeMonth(-1))
         Text(`${this.monthLabel} ▾`)
@@ -3035,7 +2524,7 @@ struct Index {
           .textAlign(TextAlign.Center)
           .padding({ left: 14, right: 14, top: 6, bottom: 6 })
           .backgroundColor('#FFFFFF')
-          .border({ width: 1, color: '#E6E8F0' })
+          .border({ width: 1, color: C_LINE })
           .borderRadius(8)
           .bindMenu(this.monthMenu())
         Button(this.isLocked ? '🔒' : '🔓')
@@ -3046,7 +2535,7 @@ struct Index {
           .padding(0)
           .backgroundColor(this.isLocked ? '#FEF4E6' : '#FFFFFF')
           .fontColor(this.isLocked ? '#B54708' : '#475467')
-          .border({ width: 1, color: this.isLocked ? '#FEDF89' : '#E6E8F0' })
+          .border({ width: 1, color: this.isLocked ? '#FEDF89' : C_LINE })
           .borderRadius(8)
           .onClick(() => this.toggleMonthLock())
         Button('下月 ›')
@@ -3055,7 +2544,7 @@ struct Index {
           .height(32)
           .backgroundColor('#FFFFFF')
           .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
+          .border({ width: 1, color: C_LINE })
           .borderRadius(8)
           .onClick(() => this.changeMonth(1))
         Blank()
@@ -3066,7 +2555,7 @@ struct Index {
           .padding({ left: 14, right: 14 })
           .backgroundColor('#FFFFFF')
           .fontColor(this.isLocked ? '#D1D5DB' : '#D92D20')
-          .border({ width: 1, color: this.isLocked ? '#E6E8F0' : '#FCD0CB' })
+          .border({ width: 1, color: this.isLocked ? C_LINE : '#FCD0CB' })
           .borderRadius(8)
           .enabled(!this.isLocked)
           .onClick(() => this.deleteCurrentMonth())
@@ -3074,7 +2563,8 @@ struct Index {
       .width('100%')
       .padding({ left: 20, right: 20, top: 8, bottom: 8 })
 
-      if (this.isLocked) {
+      // 报表 / 年度汇总 只读展示，不涉及修改操作，不显示锁定提示条
+      if (this.isLocked && this.pageKey !== 'report' && this.pageKey !== 'annual') {
         Row() {
           Text('🔒  当前月份已锁定 · 仅供查看，所有修改操作已屏蔽')
             .fontSize(11)
@@ -3090,449 +2580,81 @@ struct Index {
     .border({ width: { bottom: 1 }, color: '#E5E7EB' })
   }
 
-  @Builder
-  strip() {
-    Row({ space: 0 }) {
-      StripItem({ title: '应发合计', value: this.snap.gross, accent: C_TEXT }).layoutWeight(1)
-      StripItem({ title: '计入最低工资', value: this.snap.inWage, accent: C_ACCENT }).layoutWeight(1)
-      StripItem({ title: '不计入', value: this.snap.outWage, accent: C_SUB }).layoutWeight(1)
-      StripItem({ title: '预计到手', value: this.snap.takeHome, accent: C_OK }).layoutWeight(1)
-      Divider().vertical(true).height(22).color('#E5E7EB').margin({ left: 6, right: 12 })
-      MetaItem({ title: '上班', value: `${this.snap.workDays} 天` })
-      MetaItem({ title: '月工时', value: `${this.snap.monthlyHours}h` })
-    }
-    .width('100%')
-    .height(56)
-    .padding({ left: 18, right: 18 })
-    .backgroundColor(BG_CARD)
-    .borderRadius(12)
-  }
-
   // ================= 工作台 =================
   @Builder
   overviewPage() {
-    // 与桌面版一致：lay.addWidget(left, 1) + lay.addStretch(1) → 内容占一半，右半留白
-    Row() {
-      Column({ space: 12 }) {
-      // hero：实际到手工资（桌面版 pages_overview 的 hero 卡）
-      Column({ space: 6 }) {
-        Text(`实际到手工资 · ${this.snap.year} 年 ${this.snap.month} 月`)
-          .fontSize(12)
-          .fontColor('#C7D2FE')
-        Text(`¥ ${this.snap.takeHome}`)
-          .fontSize(32)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FFFFFF')
-        Text(`应发 ¥ ${this.snap.gross} · 个人扣除 ¥ ${this.snap.deductTotal} · 请假扣 ¥ ${this.snap.leaveDeductionTotal}`)
-          .fontSize(12)
-          .fontColor('#CBD5E1')
-      }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: 18, bottom: 18 })
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor('#1E3A8A')
-      .borderRadius(14)
-
-      Row({ space: 8 }) {
-        StatCard({ title: '应发工资合计', value: `¥ ${this.snap.gross}`, sub: '', accent: C_TEXT })
-          .layoutWeight(1)
-        StatCard({ title: '公司总成本', value: `¥ ${this.snap.companyCost}`, sub: '', accent: '#0F766E' })
-          .layoutWeight(1)
-        StatCard({ title: '提供正常劳动', value: this.snap.normalLaborText, sub: '', accent: C_ACCENT })
-          .layoutWeight(1)
-        StatCard({ title: '加班 / 请假', value: this.snap.otLeaveText, sub: '', accent: '#B54708' })
-          .layoutWeight(1)
-      }
-      .width('100%')
-
-      // 合规判定（左） + 公司每小时成本（右）并排
-      // ⚠ 不能用 Flex：Flex 默认高度撑满父容器剩余空间，两卡会被拉到很高
-      Row({ space: 12 }) {
-        Column({ space: 10 }) {
-          Text('合规判定').fontSize(14).fontWeight(FontWeight.Bold).fontColor('#334155')
-          Row({ space: 10 }) {
-            Text(this.snap.minWageOk ? '✓' : '!')
-              .fontSize(12)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#FFFFFF')
-              .width(20)
-              .height(20)
-              .textAlign(TextAlign.Center)
-              .backgroundColor(this.snap.minWageOk ? '#12B76A' : '#F79009')
-              .borderRadius(10)
-            Column({ space: 1 }) {
-              Text('计入最低工资标准的工资').fontSize(12).fontWeight(FontWeight.Bold).fontColor('#101828')
-              Text(this.snap.minWageDetail).fontSize(11).fontColor('#667085')
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-          }
-          .width('100%')
-          Row({ space: 10 }) {
-            Text(this.snap.workTimeLegal ? '✓' : '!')
-              .fontSize(12)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#FFFFFF')
-              .width(20)
-              .height(20)
-              .textAlign(TextAlign.Center)
-              .backgroundColor(this.snap.workTimeLegal ? '#12B76A' : '#F79009')
-              .borderRadius(10)
-            Column({ space: 1 }) {
-              Text('工时与加班合规').fontSize(12).fontWeight(FontWeight.Bold).fontColor('#101828')
-              Text(this.snap.workTimeDetail).fontSize(11).fontColor('#667085')
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-          }
-          .width('100%')
-        }
-        .layoutWeight(1)
-        .onAreaChange((_old: Area, now: Area) => {
-          const h = Number(now.height);
-          if (h > 0 && Math.abs(h - this.cmpCardHeight) > 0.5) {
-            this.cmpCardHeight = h;
-          }
-        })
-        .padding(16)
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor(BG_CARD)
-        .borderRadius(12)
-
-        Column({ space: 6 }) {
-          Text('公司每小时成本（仅参考）').fontSize(12).fontColor(C_SUB)
-          // 桌面版 Card 的 body 只有一行 QLabel，卡片被拉平后文字在剩余空间里垂直居中
-          Column() {
-            Text(this.snap.hasHourlyCost
-              ? `¥ ${this.snap.companyHourlyCost} / h  （参考最低 ¥ ${this.snap.parttimeMinText} / h）`
-              : '待录入考勤 / 工时后显示')
-              .fontSize(13)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(this.snap.hasHourlyCost ? '#0F766E' : '#98A2B3')
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Start)
-        }
-        // 桌面版 width = sizeHint（实测 1920 窗口下约 196），这里取 220 保证文字不折行
-        .width(220)
-        // 高度跟随左侧合规卡（桌面版两卡在同一个 QHBoxLayout 里会被拉平）。
-        // ⚠ 不能用 alignSelf(ItemAlign.Stretch)：它会让外层 Row 被撑满剩余高度。
-        .height(this.cmpCardHeight > 0 ? this.cmpCardHeight : 132)
-        // 桌面版 margins=(12, 10, 12, 10)
-        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor(BG_CARD)
-        .borderRadius(12)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Top)
+    OverviewPage({ snap: this.snap })
   }
-
-  // ================= 考勤日历 =================
   @Builder
   calendarPage() {
-    Row({ space: 14 }) {
-      Column({ space: 8 }) {
-        Row({ space: 8 }) {
-          Blank()
-          Button('🌐 API 一键铺（联网）')
-            .type(ButtonType.Normal)
-            .fontSize(11)
-            .height(30)
-            .enabled(!this.isLocked)
-            .backgroundColor('#ECFDF5')
-            .fontColor('#065F46')
-            .onClick(() => this.fillOfficialByApi())
-          Button('📋 铺本地表（法定节假日/调休）')
-            .type(ButtonType.Normal)
-            .fontSize(11)
-            .height(30)
-            .enabled(!this.isLocked)
-            .backgroundColor('#F5F3FF')
-            .fontColor('#5B21B6')
-            .onClick(() => this.fillOfficial())
-          Button('✨ 一键铺（周末休/工作日上）')
-            .type(ButtonType.Normal)
-            .fontSize(11)
-            .height(30)
-            .enabled(!this.isLocked)
-            .backgroundColor('#EEF2FF')
-            .fontColor('#4F46E5')
-            .onClick(() => this.fillDefaultCalendar())
-          Button('清空考勤')
-            .type(ButtonType.Normal)
-            .fontSize(11)
-            .height(30)
-            .enabled(!this.isLocked)
-            .backgroundColor('#FEF2F2')
-            .fontColor(C_BAD)
-            .onClick(() => this.clearAttendance())
-        }
-        .width('100%')
-
-        Text('「铺本地表 / API 一键铺」只覆盖周末、法定节假日、调休三类日期（并把「法定节假日」标记整月重写）；' +
-          '其余普通工作日的状态不动，手填的请假不受影响。')
-          .fontSize(10)
-          .fontColor(C_HINT)
-          .width('100%')
-
-        Flex({ wrap: FlexWrap.Wrap }) {
-          ForEach(this.snap.calStats, (s: CalStat) => {
-            Text(`${s.label} ${s.value}`)
-              .fontSize(11)
-              .fontColor('#475467')
-              .backgroundColor('#F8FAFC')
-              .border({ width: 1, color: '#E6E8F0' })
-              .borderRadius(999)
-              .padding({ left: 9, right: 9, top: 4, bottom: 4 })
-              .margin({ right: 6, bottom: 6 })
-          }, (s: CalStat) => `${s.label}-${s.value}`)
-        }
-        .width('100%')
-
-        Text(`考勤 · ${this.snap.year} 年 ${this.snap.month} 月`)
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#334155')
-          .width('100%')
-
-        Row({ space: 6 }) {
-          ForEach(['一', '二', '三', '四', '五', '六', '日'], (w: string) => {
-            Text(w).fontSize(11).fontColor(C_HINT).layoutWeight(1).textAlign(TextAlign.Center)
-          }, (w: string) => w)
-        }
-        .width('100%')
-
-        ForEach(this.snap.weeks, (week: CalCell[], wi: number) => {
-          Row({ space: 6 }) {
-            ForEach(week, (c: CalCell, ci: number) => {
-              if (c.day === 0) {
-                Column().layoutWeight(1).height(62)
-              } else {
-                DayCell({
-                  num: c.day,
-                  midText: c.midText,
-                  hoursText: c.hoursText,
-                  selected: c.day === this.snap.selDay,
-                  bg: dayPaletteOf(c.status).bg,
-                  fg: dayPaletteOf(c.status).fg,
-                  weekendEmpty: c.weekend && c.status.length === 0,
-                  onPick: () => {
-                    this.selectDay(c.day);
-                  }
-                })
-                  .layoutWeight(1)
-              }
-              // ⚠ key 必须带索引：月初多个占位格 day 都是 0，否则 key 重复会被丢弃
-            }, (c: CalCell, ci: number) => `${ci}-${this.cellKey(c)}`)
-          }
-          .width('100%')
-        }, (week: CalCell[], wi: number) => `${wi}-${this.rowKey(week)}`)
-
-        Flex({ wrap: FlexWrap.Wrap }) {
-          ForEach(DAY_PALETTES, (p: DayPalette) => {
-            Text(p.status)
-              .fontSize(9)
-              .fontColor(p.fg)
-              .backgroundColor(p.bg)
-              .borderRadius(4)
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .margin({ right: 5, top: 4 })
-          }, (p: DayPalette) => p.status)
-        }
-        .width('100%')
-      }
-      .layoutWeight(1)
-      .padding(16)
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor(BG_CARD)
-      .borderRadius(12)
-
-      // 右侧当天编辑
-      Column({ space: 10 }) {
-        Text(`${this.snap.month} 月 ${this.snap.selDay} 日`)
-          .fontSize(15)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(C_TEXT)
-        Text(this.snap.selSubtitle).fontSize(11).fontColor(C_HINT)
-
-        Text('状态').fontSize(12).fontColor(C_SUB).width('100%')
-        Row({ space: 6 }) {
-          ForEach(STATUS_LABELS.slice(0, 5), (s: string) => {
-            Chip({
-              label: s,
-              active: this.chipActive(s),
-              disabled: this.isLocked,
-              onTap: () => {
-                this.setStatus(s);
-              }
-            })
-          }, (s: string) => `${s}-${this.chipActive(s)}`)
-        }
-        .width('100%')
-
-        Row({ space: 6 }) {
-          ForEach(STATUS_LABELS.slice(5), (s: string) => {
-            Chip({
-              label: s,
-              active: this.chipActive(s),
-              disabled: this.isLocked,
-              onTap: () => {
-                this.setStatus(s);
-              }
-            })
-          }, (s: string) => `${s}-${this.chipActive(s)}`)
-          Chip({
-            label: '未填',
-            active: this.snap.selStatus.length === 0,
-            disabled: this.isLocked,
-            onTap: () => {
-              this.setStatus('');
-            }
-          })
-        }
-        .width('100%')
-
-        Text('标记').fontSize(12).fontColor(C_SUB).width('100%')
-        Row({ space: 6 }) {
-          Chip({ label: '无', active: this.snap.selMark === 0, disabled: this.isLocked, onTap: () => this.setMark(0) })
-          Chip({ label: '法定节假日', active: this.snap.selMark === 1, disabled: this.isLocked, onTap: () => this.setMark(1) })
-          Chip({ label: '视为正常劳动', active: this.snap.selMark === 2, disabled: this.isLocked, onTap: () => this.setMark(2) })
-        }
-        .width('100%')
-
-        Text('当天工时').fontSize(12).fontColor(C_SUB).width('100%')
-        Row({ space: 10 }) {
-          Text('加班').fontSize(12).fontColor(C_SUB).width(40)
-          TextInput({ text: this.selOt })
-            .type(InputType.NUMBER_DECIMAL)
-            .height(32)
-            .fontSize(13)
-            .layoutWeight(1)
-            .enabled(!this.isLocked)
-            .onChange((v: string) => this.setOt(v))
-          Text('小时').fontSize(11).fontColor(C_HINT).width(32)
-        }
-        .width('100%')
-
-        Row({ space: 10 }) {
-          Text('请假').fontSize(12).fontColor(C_SUB).width(40)
-          TextInput({ text: this.selLeave })
-            .type(InputType.NUMBER_DECIMAL)
-            .height(32)
-            .fontSize(13)
-            .layoutWeight(1)
-            .enabled(!this.isLocked)
-            .onChange((v: string) => this.setLeave(v))
-          Text('小时').fontSize(11).fontColor(C_HINT).width(32)
-        }
-        .width('100%')
-      }
-      .width(300)
-      .padding(16)
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor(BG_CARD)
-      .borderRadius(12)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Top)
+    CalendarPage({
+      snap: this.snap,
+      locked: this.isLocked,
+      selOt: this.selOt,
+      selLeave: this.selLeave,
+      onFillApi: () => this.fillOfficialByApi(),
+      onFillLocal: () => this.fillOfficial(),
+      onFillDefault: () => this.fillDefaultCalendar(),
+      onClear: () => this.clearAttendance(),
+      onPickDay: (d: number) => this.selectDay(d),
+      onStatus: (s: string) => this.setStatus(s),
+      onMark: (m: number) => this.setMark(m),
+      onOt: (v: string) => this.setOt(v),
+      onLeave: (v: string) => this.setLeave(v)
+    })
   }
-
   // ================= 参数页 =================
   @Builder
   paramsPage() {
     Stack() {
-      Scroll() {
-        Column({ space: 12 }) {
-          // ---------- 参数模板条 ----------
-          Row({ space: 10 }) {
-            Text('参数模板').fontSize(14).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
-            Text(this.tplNames.length === 0 ? '（暂无已存模板）' : `${this.tplSel} ▾`)
-              .fontSize(12)
-              .fontColor(this.tplNames.length === 0 ? C_HINT : C_ACCENT)
-              .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-              .borderRadius(8)
-              .backgroundColor('#FFFFFF')
-              .border({ width: 1, color: '#E6E8F0' })
-              .bindMenu(this.tplMenu())
-            Button('存为模板…')
-              .type(ButtonType.Normal)
-              .fontSize(12)
-              .height(30)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#475467')
-              .border({ width: 1, color: '#E6E8F0' })
-              .borderRadius(8)
-              .onClick(() => this.openTplDialog('save'))
-            Button('重命名')
-              .type(ButtonType.Normal)
-              .fontSize(12)
-              .height(30)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#475467')
-              .border({ width: 1, color: '#E6E8F0' })
-              .borderRadius(8)
-              .onClick(() => this.openTplDialog('rename'))
-            Button('删除')
-              .type(ButtonType.Normal)
-              .fontSize(12)
-              .height(30)
-              .backgroundColor('#FFFFFF')
-              .fontColor('#D92D20')
-              .border({ width: 1, color: '#FCD0CB' })
-              .borderRadius(8)
-              .onClick(() => this.openTplDialog('delete'))
-            Button('套用到本月')
-              .type(ButtonType.Normal)
-              .fontSize(12)
-              .height(30)
-              .backgroundColor(C_ACCENT)
-              .fontColor('#FFFFFF')
-              .borderRadius(8)
-              .onClick(() => this.applyTemplate())
-            Blank()
-            Text('整组参数存为模板，新建月份 / 换人时一键套用')
-              .fontSize(10)
-              .fontColor(C_HINT)
-          }
-          .width('100%')
-          .padding(16)
-          .backgroundColor(BG_CARD)
-          .borderRadius(12)
-
-          // ---------- 4 张参数卡（宽屏两列 / 窄屏单列） ----------
-          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-            this.socialCard()
-            this.wageCard()
-            this.leaveCard()
-            this.noteCard()
-          }
-          .width('100%')
-
-          if (this.tplHint.length > 0) {
-            Text(this.tplHint).fontSize(11).fontColor(C_SUB).width('100%')
-          }
-          Text(`存档：${this.store === null ? '—' : this.store.location()}`)
-            .fontSize(10)
-            .fontColor(C_HINT)
-            .width('100%')
-        }
-        .width('100%')
-        .padding({ left: 18, right: 18, top: 14, bottom: 18 })
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
-      .height('100%')
-      .scrollBar(BarState.Auto)
-
+      ParamsPage({
+      locked: this.isLocked,
+      tplNames: this.tplNames,
+      tplSel: this.tplSel,
+      tplHint: this.tplHint,
+      apiHint: this.apiHint,
+      apiUrl: this.apiUrl,
+      wageHint: this.wageHint,
+      province: this.fProvince,
+      region: this.fRegion,
+      socialBase: this.fSocialBase,
+      personalSocialRate: this.fPersonalSocialRate,
+      companySocialRate: this.fCompanySocialRate,
+      personalFundRate: this.fPersonalFundRate,
+      companyFundRate: this.fCompanyFundRate,
+      fundBase: this.fFundBase,
+      minWage: this.fMinWage,
+      parttimeMin: this.fParttimeMin,
+      overtimeBase: this.fOvertimeBase,
+      hoursPerDay: this.fHoursPerDay,
+      agreedDays: this.fAgreedDays,
+      note: this.fNote,
+      wageLocked: this.fWageLocked,
+      otBaseLocked: this.otBaseLocked,
+      fundBaseLocked: this.fFundBaseLocked,
+      dataPath: this.dataPath,
+      onParam: (k: string, v: string) => this.onParamEdit(k, v),
+      onNote: (v: string) => this.onNoteEdit(v),
+      onToggleFundBaseLock: () => this.toggleFundBaseLock(),
+      onToggleWageLock: () => this.toggleWageLock(),
+      onToggleOtBaseLock: () => this.toggleOtBaseLock(),
+      onFillAgreedDays: () => this.fillAgreedDays(),
+      onUseLocalWage: () => this.useLocalWageTable(),
+      onFetchWageApi: () => this.fetchWageFromApi(),
+      onOpenApiDialog: () => {
+        this.apiTestState = '';
+        this.apiDlgOpen = true;
+      },
+      onPickProvince: (p: string) => this.pickProvince(p),
+      onPickRegion: (r: string) => this.pickRegion(r),
+      onTplSelect: (n: string) => {
+        this.tplSel = n;
+      },
+      onTplSave: () => this.openTplDialog('save'),
+      onTplRename: () => this.openTplDialog('rename'),
+      onTplDelete: () => this.openTplDialog('delete'),
+      onTplApply: () => this.applyTemplate()
+    })
       if (this.tplDlgOpen) {
         this.tplDialog()
       }
@@ -3540,266 +2662,6 @@ struct Index {
     .width('100%')
     .height('100%')
   }
-
-  @Builder
-  socialCard() {
-    Column({ space: 10 }) {
-      Text('社保 / 公积金').fontSize(14).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
-      Text('五险一金基数与比例（比例填小数，0.105 = 10.5%；公积金基数默认=最低工资，可点 🔓 解锁手动改）')
-        .fontSize(10)
-        .fontColor(C_HINT)
-        .width('100%')
-      FieldRow({
-        label: '社保缴费基数', value: this.fSocialBase, unit: '元',
-        disabled: this.isLocked,
-        onEdit: (v: string) => {
-          this.fSocialBase = v;
-          this.applyParam('social_base', v);
-        }
-      })
-      FieldRow({
-        label: '个人社保比例', value: this.fPersonalSocialRate, unit: '', tip: '小数，0.105 = 10.5%',
-        disabled: this.isLocked,
-        onEdit: (v: string) => {
-          this.fPersonalSocialRate = v;
-          this.applyParam('personal_social_rate', v);
-        }
-      })
-      FieldRow({
-        label: '公司社保比例', value: this.fCompanySocialRate, unit: '', tip: '小数，0.24 = 24%',
-        disabled: this.isLocked,
-        onEdit: (v: string) => {
-          this.fCompanySocialRate = v;
-          this.applyParam('company_social_rate', v);
-        }
-      })
-      FieldRow({
-        label: '个人公积金比例', value: this.fPersonalFundRate, unit: '', tip: '小数，0.07 = 7%',
-        disabled: this.isLocked,
-        onEdit: (v: string) => {
-          this.fPersonalFundRate = v;
-          this.applyParam('personal_fund_rate', v);
-        }
-      })
-      FieldRow({
-        label: '公司公积金比例', value: this.fCompanyFundRate, unit: '', tip: '小数，0.07 = 7%',
-        disabled: this.isLocked,
-        onEdit: (v: string) => {
-          this.fCompanyFundRate = v;
-          this.applyParam('company_fund_rate', v);
-        }
-      })
-      FieldRow({
-        label: '公积金缴费基数', value: this.fFundBase, unit: '元',
-        disabled: this.isLocked,
-        tip: '默认与本地月最低工资同步；如需特殊基数，请点击右侧「🔒」解锁后修改',
-        locked: this.fFundBaseLocked,
-        lockable: true,
-        onEdit: (v: string) => {
-          this.fFundBase = v;
-          this.applyParam('fund_base', v);
-        },
-        onToggleLock: () => this.toggleFundBaseLock()
-      })
-    }
-    .width('48%')
-    .constraintSize({ minWidth: 360 })
-    .padding(16)
-    .margin({ bottom: 12 })
-    .alignItems(HorizontalAlign.Start)
-    .backgroundColor(BG_CARD)
-    .borderRadius(12)
-  }
-
-  @Builder
-  wageCard() {
-    Column({ space: 10 }) {
-      Text('工资与工时标准').fontSize(14).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
-      Text(this.apiHint)
-        .fontSize(10)
-        .fontColor(this.apiUrl.length > 0 ? '#0B7A3B' : C_HINT)
-        .width('100%')
-      Row({ space: 8 }) {
-        Button('⚙️ API 设置')
-          .type(ButtonType.Normal)
-          .fontSize(11)
-          .height(28)
-          .padding({ left: 10, right: 10 })
-          .backgroundColor('#F8FAFC')
-          .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
-          .borderRadius(8)
-          .onClick(() => {
-            this.apiTestState = '';
-            this.apiDlgOpen = true;
-          })
-        Blank()
-      }
-      .width('100%')
-
-      Row({ space: 8 }) {
-        Text('工作地').fontSize(11).fontColor('#667085').width(48)
-        Text(this.fProvince.length === 0 ? '请选择省份 ▾' : `${this.fProvince} ▾`)
-          .fontSize(12)
-          .fontColor(this.fProvince.length === 0 ? C_HINT : C_TEXT)
-          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-          .layoutWeight(1)
-          .borderRadius(8)
-          .backgroundColor('#FFFFFF')
-          .border({ width: 1, color: '#E6E8F0' })
-          .bindMenu(this.provinceMenu())
-        Text(this.fRegion.length === 0 ? '请选择地区 ▾' : `${this.fRegion} ▾`)
-          .fontSize(12)
-          .fontColor(this.fRegion.length === 0 ? C_HINT : C_TEXT)
-          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-          .layoutWeight(1)
-          .borderRadius(8)
-          .backgroundColor('#FFFFFF')
-          .border({ width: 1, color: '#E6E8F0' })
-          .bindMenu(this.regionMenu())
-      }
-      .width('100%')
-
-      Row({ space: 8 }) {
-        Button('📋 用本地表')
-          .type(ButtonType.Normal)
-          .fontSize(12)
-          .height(30)
-          .layoutWeight(1)
-          .enabled(!this.isLocked)
-          .backgroundColor('#F5F3FF')
-          .fontColor('#5B21B6')
-          .borderRadius(8)
-          .onClick(() => this.useLocalWageTable())
-        Button('🌐 联网查询（API）')
-          .type(ButtonType.Normal)
-          .fontSize(12)
-          .height(30)
-          .layoutWeight(1)
-          .enabled(!this.isLocked)
-          .backgroundColor('#ECFDF5')
-          .fontColor('#065F46')
-          .borderRadius(8)
-          .onClick(() => this.fetchWageFromApi())
-      }
-      .width('100%')
-      if (this.wageHint.length > 0) {
-        Text(this.wageHint).fontSize(10).fontColor(C_HINT).width('100%')
-      }
-
-      FieldRow({
-        label: '月最低工资', value: this.fMinWage, unit: '元',
-        locked: this.fWageLocked,
-        lockable: true,
-        disabled: this.isLocked,
-        onEdit: (v: string) => {
-          this.fMinWage = v;
-          this.applyParam('min_wage', v);
-        },
-        onToggleLock: () => this.toggleWageLock()
-      })
-      FieldRow({
-        label: '非全日制小时最低工资', value: this.fParttimeMin, unit: '元/时',
-        locked: this.fWageLocked,
-        disabled: this.isLocked,
-        onEdit: (v: string) => {
-          this.fParttimeMin = v;
-          this.applyParam('parttime_min', v);
-        }
-      })
-      FieldRow({
-        label: '加班费计算基数', value: this.fOvertimeBase, unit: '元',
-        tip: '默认与本地月最低工资同步；如需特殊基数，请点击右侧「🔒」解锁后修改',
-        locked: this.otBaseLocked,
-        lockable: true,
-        disabled: this.isLocked,
-        onEdit: (v: string) => {
-          this.fOvertimeBase = v;
-          this.applyParam('overtime_base', v);
-        },
-        onToggleLock: () => this.toggleOtBaseLock()
-      })
-      FieldRow({
-        label: '24小时内工时', value: this.fHoursPerDay, unit: '小时',
-        disabled: this.isLocked,
-        tip: '第 N 次下班 → 第 N+1 次上班结束的 24 小时（正常一个周期应为 24 小时；不是 24 小时说明排班有问题）',
-        onEdit: (v: string) => {
-          this.fHoursPerDay = v;
-          this.applyParam('hours_per_day', v);
-        }
-      })
-    }
-    .width('48%')
-    .constraintSize({ minWidth: 360 })
-    .padding(16)
-    .margin({ bottom: 12 })
-    .alignItems(HorizontalAlign.Start)
-    .backgroundColor(BG_CARD)
-    .borderRadius(12)
-  }
-
-  @Builder
-  leaveCard() {
-    Column({ space: 10 }) {
-      Text('计薪与请假').fontSize(14).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
-      Text('月计薪天数按国家规定固定 21.75 天；缺勤扣款基准：约定工作天数 − 提供正常劳动天数')
-        .fontSize(10)
-        .fontColor(C_HINT)
-        .width('100%')
-      FieldRow({
-        label: '约定工作天数', value: this.fAgreedDays, unit: '天',
-        disabled: this.isLocked,
-        onEdit: (v: string) => {
-          this.fAgreedDays = v;
-          this.applyParam('agreed_work_days', v);
-        }
-      })
-      Button('一键填入提供正常劳动天数')
-        .type(ButtonType.Normal)
-        .fontSize(12)
-        .height(30)
-        .width('100%')
-        .enabled(!this.isLocked)
-        .backgroundColor('#F8FAFC')
-        .fontColor('#475467')
-        .border({ width: 1, color: '#E6E8F0' })
-        .borderRadius(8)
-        .onClick(() => this.fillAgreedDays())
-    }
-    .width('48%')
-    .constraintSize({ minWidth: 360 })
-    .padding(16)
-    .margin({ bottom: 12 })
-    .alignItems(HorizontalAlign.Start)
-    .backgroundColor(BG_CARD)
-    .borderRadius(12)
-  }
-
-  @Builder
-  noteCard() {
-    Column({ space: 10 }) {
-      Text('备注 / 姓名').fontSize(14).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
-      Text('用于区分历史月份').fontSize(10).fontColor(C_HINT).width('100%')
-      TextInput({ text: this.fNote, placeholder: '例如：张三 · 工资核算' })
-        .height(34)
-        .fontSize(13)
-        .width('100%')
-        .enabled(!this.isLocked)
-        .onChange((v: string) => {
-          this.fNote = v;
-          this.book.note = v;
-          this.refresh();
-        })
-    }
-    .width('48%')
-    .constraintSize({ minWidth: 360 })
-    .padding(16)
-    .margin({ bottom: 12 })
-    .alignItems(HorizontalAlign.Start)
-    .backgroundColor(BG_CARD)
-    .borderRadius(12)
-  }
-
   @Builder
   tplDialog() {
     Column({ space: 12 }) {
@@ -3826,7 +2688,7 @@ struct Index {
           .height(30)
           .backgroundColor('#FFFFFF')
           .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
+          .border({ width: 1, color: C_LINE })
           .borderRadius(8)
           .onClick(() => {
             this.tplDlgOpen = false;
@@ -3852,621 +2714,69 @@ struct Index {
   // ================= 报表 =================
   @Builder
   reportPage() {
-    Row({ space: 12 }) {
-      Scroll() {
-        Column({ space: 10 }) {
-          ForEach(this.snap.groups, (g: RecGroup, gi: number) => {
-            Column({ space: 6 }) {
-              Row() {
-                Text(`${this.groupOpen[gi] ? '▾' : '▸'} ${g.title}`)
-                  .fontSize(13.5)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#0F172A')
-                  .layoutWeight(1)
-              }
-              .width('100%')
-              .padding({ top: 2, bottom: 2 })
-              .onClick(() => {
-                const next: boolean[] = this.groupOpen.slice();
-                next[gi] = !next[gi];
-                this.groupOpen = next;
-              })
-
-              if (this.groupOpen[gi]) {
-                Column({ space: 4 }) {
-                  ForEach(g.lines, (ln: RecLine, li: number) => {
-                    Row({ space: 16 }) {
-                      Text(ln.label)
-                        .fontSize(12)
-                        .fontColor(ln.kind === 'sec' ? '#7C8AA5' : '#475569')
-                        .fontWeight(ln.kind === 'sec' ? FontWeight.Bold : FontWeight.Normal)
-                        .layoutWeight(1)
-                      Text(ln.value)
-                        .fontSize(12)
-                        .fontColor(this.lineColor(ln.kind, ln.bold))
-                        .fontWeight(this.lineBold(ln.kind, ln.bold))
-                        .textAlign(TextAlign.End)
-                    }
-                    .width('100%')
-                    .alignItems(VerticalAlign.Top)
-                  }, (ln: RecLine, li: number) => `${gi}-${li}-${ln.label}-${ln.value}-${ln.kind}-${ln.bold}`)
-                }
-                .width('100%')
-                .alignItems(HorizontalAlign.Start)
-              }
-            }
-            .width('100%')
-            .padding({ left: 14, right: 14, top: 8, bottom: 12 })
-            .alignItems(HorizontalAlign.Start)
-            .backgroundColor(BG_CARD)
-            .borderRadius(12)
-          }, (g: RecGroup, gi: number) => `${gi}-${g.title}-${this.groupOpen[gi]}`)
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-      }
-      .layoutWeight(1)
-      .height('100%')
-      .align(Alignment.Top)
-      .scrollBar(BarState.Auto)
-
-      // ---------- 右侧常驻汇总卡 ----------
-      Column({ space: 5 }) {
-        Text('应发工资').fontSize(12).fontColor('#667085').width('100%')
-        Text(`¥ ${this.snap.gross}`)
-          .fontSize(26)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#4F46E5')
-          .width('100%')
-
-        Row() {
-          Text('个人扣除').fontSize(12).fontColor('#667085').layoutWeight(1)
-          Text(`- ¥ ${this.snap.deductTotal}`).fontSize(12).fontWeight(FontWeight.Bold).fontColor('#F04438')
-        }
-        .width('100%')
-        Row() {
-          Text('请假扣款').fontSize(12).fontColor('#667085').layoutWeight(1)
-          Text(`- ¥ ${this.snap.leaveDeductionTotal}`)
-            .fontSize(12)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#F04438')
-        }
-        .width('100%')
-
-        Divider().color('#E6E8F0')
-        Text('实际到手').fontSize(12).fontColor('#667085').width('100%')
-        Text(`¥ ${this.snap.takeHome}`)
-          .fontSize(30)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#4F46E5')
-          .width('100%')
-        Divider().color('#E6E8F0')
-
-        Row() {
-          Text('到手小时工资').fontSize(12).fontColor('#667085').layoutWeight(1)
-          Text(`¥ ${this.snap.takeHomeHourly} / h`).fontSize(12).fontWeight(FontWeight.Bold).fontColor('#0F172A')
-        }
-        .width('100%')
-        Row() {
-          Text('提供正常劳动').fontSize(12).fontColor('#667085').layoutWeight(1)
-          Text(this.snap.normalLaborText).fontSize(12).fontWeight(FontWeight.Bold).fontColor('#0F172A')
-        }
-        .width('100%')
-        Row() {
-          Text('公司总成本').fontSize(12).fontColor('#667085').layoutWeight(1)
-          Text(`¥ ${this.snap.companyCost}`).fontSize(12).fontWeight(FontWeight.Bold).fontColor('#0F172A')
-        }
-        .width('100%')
-
-        Text('工作日加班 ×1.5 · 休息日 ×2 · 法定节假日 ×3 · 请假 / 缺勤扣款：先按「(应发工资 − 个人扣除) ÷ 约定工作天数」算出「请假一天扣除的工资」，缺勤按天扣、请假不足一天按小时（再 ÷ 8）扣')
-          .fontSize(11)
-          .fontColor('#98A2B3')
-          .width('100%')
-          .margin({ top: 6 })
-
-        Blank()
-        Button('📄 导出 CSV')
-          .type(ButtonType.Normal)
-          .fontSize(12)
-          .height(32)
-          .width('100%')
-          .backgroundColor(C_ACCENT)
-          .fontColor('#FFFFFF')
-          .borderRadius(9)
-          .onClick(() => this.exportReport())
-        if (this.exportState.length > 0) {
-          Text(this.exportState).fontSize(10).fontColor(C_HINT).width('100%').maxLines(4)
-        }
-      }
-      .width(300)
-      .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor(BG_CARD)
-      .borderRadius(12)
-    }
-    .width('100%')
-    .height('100%')
-    .alignItems(VerticalAlign.Top)
+    ReportPage({
+      snap: this.snap,
+      exportState: this.exportState,
+      onExport: () => this.exportReport()
+    })
   }
 
   // ================= 薪酬页 =================
-  /** 「添加工资项」菜单：按类型分组，已添加的标 ✓，底部可自定义。 */
-  @Builder
-  addPayMenu() {
-    Menu() {
-      ForEach(PAYITEM_GROUPS, (g: PayCatalogGroup) => {
-        MenuItemGroup({ header: `${g.title} · 可选 ${this.catalogLeft(g.type)} 项` }) {
-          ForEach(g.items, (n: string) => {
-            MenuItem({ content: this.payItemMenuText(n) })
-              .onClick(() => {
-                this.addPayItemNamed(n, g.type);
-              })
-          }, (n: string) => `${g.type}-${n}-${this.hasPayItem(n)}`)
-        }
-      }, (g: PayCatalogGroup) => `${g.type}-${this.catalogLeft(g.type)}`)
-      MenuItem({ content: '＋ 输入自定义名称…' })
-        .onClick(() => {
-          this.addPayItem();
-        })
-    }
-  }
-
   @Builder
   salaryPage() {
-    Column({ space: 12 }) {
-      // 桌面版 SalaryStripWidget 只属于薪酬页（不是全局顶栏）
-      this.strip()
-      // 桌面版用 ResponsiveColumns：左栏弹性、右栏固定 300（min300/max520），宽屏并排。
-      // ⚠ 不能用 Flex(wrap)：左栏 flexGrow(1) 会先占满整行，把右栏挤到下一行（看不见）。
-      Row({ space: 14 }) {
-      Column({ space: 8 }) {
-        Row({ space: 8 }) {
-          Text('工资项').fontSize(14).fontWeight(FontWeight.Bold).fontColor('#334155')
-          Blank()
-          Button('📋 复制工资项')
-            .type(ButtonType.Normal)
-            .fontSize(12)
-            .height(30)
-            .width(124)
-            .enabled(!this.isLocked)
-            .backgroundColor('#F8FAFC')
-            .fontColor('#475467')
-            .border({ width: 1, color: '#E6E8F0' })
-            .borderRadius(8)
-            .onClick(() => this.openCopyDialog())
-          Button('＋ 添加工资项')
-            .type(ButtonType.Normal)
-            .fontSize(12)
-            .height(30)
-            .width(124)
-            .enabled(!this.isLocked)
-            .backgroundColor(C_ACCENT)
-            .fontColor('#FFFFFF')
-            .bindMenu(this.addPayMenu)
-        }
-        .width('100%')
-
-        Row({ space: 8 }) {
-          Text('类型').fontSize(11).fontColor(C_HINT).width(PI_COL_TYPE)
-          Text('名称').fontSize(11).fontColor(C_HINT).layoutWeight(1)
-          Text('标准').fontSize(11).fontColor(C_HINT).width(PI_COL_STD)
-          Text('月小计').fontSize(11).fontColor(C_HINT).width(PI_COL_SUB).textAlign(TextAlign.End)
-          Text('').width(PI_COL_OP)
-        }
-        .width('100%')
-        .padding({ left: 10, right: 10 })
-
-        if (this.snap.payRows.length === 0) {
-          Text('本月还没有工资项：点「＋ 添加工资项」开始录入。')
-            .fontSize(12)
-            .fontColor(C_HINT)
-            .padding({ top: 16, bottom: 16 })
-        } else {
-          // ⚠ 整行直接写在父组件里，不拆子组件：
-          //   @Param 只能观察到「@Local/@Param 变量」的变化，观察不到数组元素的成员属性；
-          //   @Event 回写父组件后向子组件同步是异步的。行内控件放父级最稳。
-          ForEach(this.snap.payRows, (p: PayRow) => {
-            Row({ space: 8 }) {
-              Button(`${this.chipOf(p.type).short}  ▾`)
-                .type(ButtonType.Normal)
-                .fontSize(11)
-                .height(28)
-                .width(PI_COL_TYPE)
-                .padding({ left: 2, right: 2 })
-                .enabled(!this.isLocked)
-                .fontColor(this.chipOf(p.type).fg)
-                .backgroundColor(this.chipOf(p.type).bg)
-                .border({ width: 1, color: this.chipOf(p.type).border })
-                .borderRadius(6)
-                .bindMenu(this.rowTypeMenu(p))
-
-              TextInput({ text: p.name, placeholder: '名称' })
-                .height(30)
-                .fontSize(12)
-                .layoutWeight(1)
-                .enabled(!this.isLocked)
-                .onChange((v: string) => this.renamePayItem(p.index, v))
-              TextInput({ text: p.amountText })
-                .type(InputType.NUMBER_DECIMAL)
-                .height(30)
-                .fontSize(12)
-                .width(PI_COL_STD)
-                .enabled(!this.isLocked)
-                .onChange((v: string) => this.setPayAmount(p.index, v))
-              Text(`¥ ${p.subText}`)
-                .fontSize(12)
-                .fontColor(C_TEXT)
-                .width(PI_COL_SUB)
-                .textAlign(TextAlign.End)
-              Text('✕')
-                .fontSize(13)
-                .fontColor(C_BAD)
-                .width(PI_COL_OP)
-                .textAlign(TextAlign.Center)
-                .enabled(!this.isLocked)
-                .onClick(() => this.removePayItem(p.index))
-            }
-            .width('100%')
-            .padding({ left: 10, right: 10, top: 2, bottom: 2 })
-            // key 只含「行号 + 类型」：
-            //   类型变 → 重建 chip；名称/金额变 → 不重建，否则输入框会因重建而失焦
-          }, (p: PayRow) => `${p.index}-${p.type}`)
-        }
-      }
-      // 与桌面版 ResponsiveColumns 一致：主栏吃满剩余宽度（不设上限）
-      .layoutWeight(1)
-      .constraintSize({ minWidth: 460 })
-      .margin({ bottom: 14 })
-      .padding(16)
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor(BG_CARD)
-      .borderRadius(12)
-
-      Column({ space: 12 }) {
-        // 加班工资
-        Column({ space: 6 }) {
-          Text('加班工资').fontSize(14).fontWeight(FontWeight.Bold).fontColor('#334155')
-          Text(`${overtimeHourlyTip()}；工作日 ×1.5 · 休息日 ×2 · 法定节假日 ×3`)
-            .fontSize(10)
-            .fontColor(C_HINT)
-          Row({ space: 8 }) {
-            Text('固定加班工资').fontSize(12).fontColor(C_SUB).width(76)
-            TextInput({ text: this.snap.fixedOt })
-              .type(InputType.NUMBER_DECIMAL)
-              .height(30)
-              .fontSize(12)
-              .width(84)
-              .onChange((v: string) => this.setFixedOt(v))
-            Text('元').fontSize(11).fontColor(C_HINT).layoutWeight(1)
-          }
-          .width('100%')
-          OtRow({
-            label: '工作日加班',
-            hours: this.snap.otHoursWorkday,
-            wage: this.snap.otWageWorkday,
-            badge: '×1.5',
-            badgeFg: '#15803D',
-            badgeBg: '#DCFCE7',
-            onEdit: (v: string) => this.setOtHours('workday', v)
-          })
-          OtRow({
-            label: '休息日加班',
-            hours: this.snap.otHoursRestday,
-            wage: this.snap.otWageRestday,
-            badge: '×2.0',
-            badgeFg: '#C2410C',
-            badgeBg: '#FFEDD5',
-            onEdit: (v: string) => this.setOtHours('restday', v)
-          })
-          OtRow({
-            label: '法定节假日加班',
-            hours: this.snap.otHoursHoliday,
-            wage: this.snap.otWageHoliday,
-            badge: '×3.0',
-            badgeFg: '#B91C1C',
-            badgeBg: '#FEE2E2',
-            onEdit: (v: string) => this.setOtHours('holiday', v)
-          })
-          Row({ space: 8 }) {
-            Text('加班费基数（月）').fontSize(12).fontColor(C_SUB).width(104)
-            TextInput({ text: this.snap.otBaseText })
-              .type(InputType.NUMBER_DECIMAL)
-              .height(30)
-              .fontSize(12)
-              .width(84)
-              .enabled(!this.otBaseLocked)
-              .onChange((v: string) => this.setOtBase(v))
-            Text(this.otBaseLocked ? '🔒' : '🔓')
-              .fontSize(14)
-              .layoutWeight(1)
-              .textAlign(TextAlign.End)
-              .onClick(() => this.toggleOtBaseLock())
-          }
-          .width('100%')
-          Text('默认与月最低工资标准同步；如需特殊基数，请点右侧「🔒」解锁后修改')
-            .fontSize(10)
-            .fontColor(C_HINT)
-          Divider().color('#EEF0F6')
-          Row() {
-            Text('加班工资合计').fontSize(12).fontColor(C_SUB).layoutWeight(1)
-            Text(`¥ ${this.snap.otSubtotal}`).fontSize(15).fontWeight(FontWeight.Bold).fontColor('#1D4ED8')
-          }
-          .width('100%')
-        }
-        .padding(16)
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor(BG_CARD)
-        .borderRadius(12)
-
-        // 个人扣除
-        Column({ space: 6 }) {
-          Text('个人扣除').fontSize(14).fontWeight(FontWeight.Bold).fontColor('#334155')
-          Text('社保 / 公积金 = 基数 × 比例（自动）；基数与比例在「参数」页设置')
-            .fontSize(10)
-            .fontColor(C_HINT)
-          Row({ space: 6 }) {
-            Checkbox({ name: 'taxAuto', group: 'ded' })
-              .select(this.snap.incomeTaxAuto)
-              .enabled(!this.isLocked)
-              .onChange((on: boolean) => this.toggleTaxAuto(on))
-            Text('自动计算个税（月度预扣率表）')
-              .fontSize(12)
-              .fontColor(this.isLocked ? '#98A2B3' : C_SUB)
-          }
-          .width('100%')
-          RoRow({ label: '个人社保（自动）', value: this.snap.personalSocialDetail })
-          RoRow({ label: '个人公积金（自动）', value: this.snap.personalFundDetail })
-          Row({ space: 8 }) {
-            Text('大病医疗补助（元）').fontSize(12).fontColor(C_SUB).layoutWeight(1)
-            TextInput({ text: this.snap.bigDisease })
-              .type(InputType.NUMBER_DECIMAL)
-              .height(30)
-              .fontSize(12)
-              .width(84)
-              .fontColor(this.isLocked ? '#98A2B3' : '#0F172A')
-              .backgroundColor(this.isLocked ? '#F5F7FA' : '#FFFFFF')
-              .onChange((v: string) => this.setBigDisease(v))
-          }
-          .width('100%')
-          if (this.snap.incomeTaxAuto) {
-            RoRow({ label: '个人所得税（自动）', value: this.snap.incomeTax })
-          } else {
-            Row({ space: 8 }) {
-              Text('个人所得税').fontSize(12).fontColor(C_SUB).layoutWeight(1)
-              TextInput({ text: this.snap.incomeTax })
-                .type(InputType.NUMBER_DECIMAL)
-                .height(30)
-                .fontSize(12)
-                .width(84)
-                .fontColor(this.isLocked ? '#98A2B3' : '#0F172A')
-                .backgroundColor(this.isLocked ? '#F5F7FA' : '#FFFFFF')
-                .onChange((v: string) => this.setIncomeTax(v))
-            }
-            .width('100%')
-          }
-          Divider().color('#EEF0F6')
-          Row() {
-            Text('个人扣除合计').fontSize(12).fontColor(C_SUB).layoutWeight(1)
-            Text(`- ¥ ${this.snap.deductTotal}`).fontSize(15).fontWeight(FontWeight.Bold).fontColor(C_BAD)
-          }
-          .width('100%')
-        }
-        .padding(16)
-        .alignItems(HorizontalAlign.Start)
-        .backgroundColor(BG_CARD)
-        .borderRadius(12)
-      }
-      // 侧栏：桌面版 setMinimumWidth(300) / setMaximumWidth(520)，实际取 300
-      .width(300)
-      .margin({ bottom: 14 })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
+    SalaryPage({
+      snap: this.snap,
+      locked: this.isLocked,
+      otBaseLocked: this.otBaseLocked,
+      onCopy: () => this.openCopyDialog(),
+      onAddNamed: (n: string, t: string) => this.addPayItemNamed(n, t),
+      onAddCustom: () => this.addPayItem(),
+      onRename: (i: number, v: string) => this.renamePayItem(i, v),
+      onAmount: (i: number, v: string) => this.setPayAmount(i, v),
+      onType: (i: number, k: string) => this.setPayType(i, k),
+      onRemove: (i: number) => this.removePayItem(i),
+      onFixedOt: (v: string) => this.setFixedOt(v),
+      onOtHours: (k: string, v: string) => this.setOtHours(k, v),
+      onOtBase: (v: string) => this.setOtBase(v),
+      onToggleOtBaseLock: () => this.toggleOtBaseLock(),
+      onTaxAuto: (on: boolean) => this.toggleTaxAuto(on),
+      onBigDisease: (v: string) => this.setBigDisease(v),
+      onIncomeTax: (v: string) => this.setIncomeTax(v)
+    })
   }
-
   // ================= 年度汇总（界面）=================
   @Builder
   annualPage() {
-    Column({ space: 10 }) {
-      // ---------- 顶栏：年份切换 + 导出 ----------
-      Row({ space: 8 }) {
-        Button('‹ 上一年')
-          .type(ButtonType.Normal)
-          .fontSize(12)
-          .height(30)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
-          .borderRadius(8)
-          .onClick(() => this.annualShift(-1))
-        Text(`${this.annualYear} 年 · 12 个月一览`)
-          .fontSize(14)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(C_TEXT)
-        Button('下一年 ›')
-          .type(ButtonType.Normal)
-          .fontSize(12)
-          .height(30)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
-          .borderRadius(8)
-          .onClick(() => this.annualShift(1))
-        Blank()
-        Text(`应发合计 ¥ ${this.annualGross} · 到手合计 ¥ ${this.annualTakeHome}`)
-          .fontSize(11)
-          .fontColor(C_HINT)
-        Button('📄 导出 CSV')
-          .type(ButtonType.Normal)
-          .fontSize(12)
-          .height(30)
-          .padding({ left: 12, right: 12 })
-          .backgroundColor('#F8FAFC')
-          .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
-          .borderRadius(8)
-          .onClick(() => this.exportAnnual())
-      }
-      .width('100%')
-
-      if (this.annualState.length > 0) {
-        Text(this.annualState).fontSize(10).fontColor(C_HINT).width('100%').maxLines(3)
-      }
-
-      // ---------- 12 个月一览表（10 列，窄屏横向滚动） ----------
-      Scroll() {
-        Column({ space: 0 }) {
-          Text('数据读取自已保存的月份；未保存的月份显示 “—”。公司成本 = 应发 + 公司社保 + 公司公积金。')
-            .fontSize(10)
-            .fontColor(C_HINT)
-            .width(900)
-            .padding({ bottom: 6 })
-
-          Row() {
-            Text('月份').fontSize(10).fontColor('#98A2B3').width(60).textAlign(TextAlign.Center)
-            Text('出勤(天)').fontSize(10).fontColor('#98A2B3').width(64).textAlign(TextAlign.End)
-            Text('加班(小时)').fontSize(10).fontColor('#98A2B3').width(72).textAlign(TextAlign.End)
-            Text('请假(小时)').fontSize(10).fontColor('#98A2B3').width(72).textAlign(TextAlign.End)
-            Text('应发工资').fontSize(10).fontColor('#98A2B3').width(108).textAlign(TextAlign.End)
-            Text('个人扣除').fontSize(10).fontColor('#98A2B3').width(108).textAlign(TextAlign.End)
-            Text('请假扣款').fontSize(10).fontColor('#98A2B3').width(108).textAlign(TextAlign.End)
-            Text('实发工资').fontSize(10).fontColor('#98A2B3').width(108).textAlign(TextAlign.End)
-            Text('公司成本').fontSize(10).fontColor('#98A2B3').width(108).textAlign(TextAlign.End)
-            Text('工时合规').fontSize(10).fontColor('#98A2B3').width(72).textAlign(TextAlign.Center)
-          }
-          .width(900)
-          .padding({ top: 2, bottom: 6 })
-          .border({ width: { bottom: 1 }, color: '#E6E8F0' })
-
-          ForEach(this.annualRows, (row: AnnualRow, ri: number) => {
-            AnnualRowView({
-              month: row.month,
-              hasData: row.hasData,
-              isTotal: row.isTotal,
-              workText: row.workText,
-              otText: row.otText,
-              leaveText: row.leaveText,
-              gross: row.gross,
-              deduct: row.deduct,
-              leaveDeduct: row.leaveDeduct,
-              takeHome: row.takeHome,
-              companyCost: row.companyCost,
-              legal: row.legal
-            })
-          }, (row: AnnualRow, ri: number) =>
-          `${ri}-${row.month}-${row.hasData}-${row.isTotal}-${row.gross}-${row.takeHome}-${row.legal}`)
-        }
-        .width(900)
-      }
-      .width('100%')
-      .scrollBar(BarState.Auto)
-      .scrollable(ScrollDirection.Horizontal)
-      .padding(16)
-      .align(Alignment.TopStart)
-      .backgroundColor(BG_CARD)
-      .borderRadius(12)
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
+    AnnualPage({
+      year: this.annualYear,
+      rows: this.annualRows,
+      grossText: this.annualGross,
+      takeHomeText: this.annualTakeHome,
+      stateText: this.annualState,
+      onShift: (delta: number) => this.annualShift(delta),
+      onExport: () => this.exportAnnual()
+    })
   }
 
   // ================= 相关单位（界面）=================
   @Builder
   unitsPage() {
-    Column({ space: 10 }) {
-      // ---------- 卡片头：标题 + hint + 本页锁 ----------
-      Row({ space: 8 }) {
-        Text('单位登记表').fontSize(14).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
-        Blank()
-        Text(this.unitsState).fontSize(10).fontColor(C_HINT).maxLines(2).layoutWeight(1)
-        Button(this.unitsLocked ? '🔒 已锁定' : '🔓 已解锁')
-          .type(ButtonType.Normal)
-          .fontSize(11)
-          .height(28)
-          .padding({ left: 10, right: 10 })
-          .backgroundColor(this.unitsLocked ? '#F5F7FA' : '#EEF2FF')
-          .fontColor(this.unitsLocked ? '#667085' : '#4F46E5')
-          .border({ width: 1, color: this.unitsLocked ? '#E6E8F0' : '#C7D2FE' })
-          .borderRadius(8)
-          .onClick(() => this.toggleUnitsLock())
-      }
-      .width('100%')
-
-      Text('已按内置类型各列一行，空的直接填；同一类型可以有多家时点「＋ 添加单位」（例如先后 / 同时签过多份劳动合同）；列表里没有的类型选「其他相关单位」，具体是什么写在「单位名称」栏')
-        .fontSize(10)
-        .fontColor(C_HINT)
-        .width('100%')
-
-      if (this.unitsLocked) {
-        Text('🔒  单位登记表已锁定 · 名称 / 编号不可修改，「🔍」仍可用')
-          .fontSize(11)
-          .fontColor('#B54708')
-          .backgroundColor('#FEF4E6')
-          .borderRadius(8)
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .width('100%')
-      }
-
-      // ---------- 表头 ----------
-      Row({ space: 8 }) {
-        Text('类型').fontSize(10).fontColor('#98A2B3').width(134)
-        Text('单位名称').fontSize(10).fontColor('#98A2B3').layoutWeight(1)
-        Text('编号').fontSize(10).fontColor('#98A2B3').layoutWeight(1)
-        Text('').width(34)
-        Text('').width(24)
-      }
-      .width('100%')
-      .padding({ top: 2, bottom: 4 })
-      .border({ width: { bottom: 1 }, color: '#E6E8F0' })
-
-      // ---------- 数据行 ----------
-      if (this.unitRows.length === 0) {
-        Text('单位表是空的 —— 点下面「＋ 添加单位」选一个类型')
-          .fontSize(11)
-          .fontColor(C_HINT)
-          .padding({ top: 16, bottom: 16 })
-      } else {
-        ForEach(this.unitRows, (u: UnitRow) => {
-          UnitRowView({
-            role: u.role,
-            roleLabel: u.roleLabel,
-            codeLabel: u.codeLabel,
-            name: u.name,
-            code: u.code,
-            locked: this.unitsLocked,
-            onRename: (v: string) => this.setUnitName(u.index, v),
-            onCode: (v: string) => this.setUnitCode(u.index, v),
-            onType: (k: string) => this.setUnitType(u.index, k),
-            onAction: (s: string) => this.unitAction(u, s),
-            onDelete: () => this.removeUnit(u.index)
-          })
-        }, (u: UnitRow) => `${u.index}-${u.role}-${this.rowsKey}`)
-      }
-
-      // ---------- 添加单位 ----------
-      Row({ space: 8 }) {
-        Button('＋ 添加单位')
-          .type(ButtonType.Normal)
-          .fontSize(12)
-          .height(30)
-          .padding({ left: 12, right: 12 })
-          .backgroundColor(this.unitsLocked ? '#F5F7FA' : C_ACCENT)
-          .fontColor(this.unitsLocked ? '#98A2B3' : '#FFFFFF')
-          .borderRadius(8)
-          .enabled(!this.unitsLocked)
-          .bindMenu(this.addUnitMenu())
-        Blank()
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .padding(16)
-    .alignItems(HorizontalAlign.Start)
-    .backgroundColor(BG_CARD)
-    .borderRadius(12)
+    UnitsPage({
+      rows: this.unitRows,
+      locked: this.unitsLocked,
+      stateText: this.unitsState,
+      rowsKey: this.rowsKey,
+      onToggleLock: () => this.toggleUnitsLock(),
+      onRename: (i: number, v: string) => this.setUnitName(i, v),
+      onCode: (i: number, v: string) => this.setUnitCode(i, v),
+      onType: (i: number, k: string) => this.setUnitType(i, k),
+      onAction: (row: UnitRow, site: string) => this.unitAction(row, site),
+      onEmptyTerm: () => {
+        this.unitsState = '请先填写「统一社会信用代码」或「单位名称」，再去搜索';
+      },
+      onAdd: (role: string) => this.addUnit(role),
+      onDelete: (i: number) => this.removeUnit(i)
+    })
   }
 
   @Builder
@@ -4534,6 +2844,9 @@ struct Index {
       if (this.copyDlgOpen) {
         this.copyDlg()
       }
+      if (this.clearDlgOpen) {
+        this.clearDlg()
+      }
       if (this.aboutOpen) {
         this.aboutDialog()
       }
@@ -4550,26 +2863,26 @@ struct Index {
     Column({ space: 10 }) {
       Text('最低工资 / 节假日 API 设置').fontSize(15).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
       Text('OpenAI 兼容接口（https）。配置后「🌐 联网查询」「🌐 API 一键铺」使用它。')
-        .fontSize(10)
+        .fontSize(11)
         .fontColor(C_HINT)
         .width('100%')
 
       Row({ space: 8 }) {
-        Text('服务商').fontSize(11).fontColor('#667085').width(64)
+        Text('服务商').fontSize(11).fontColor(C_LABEL).width(64)
         Text('选择服务商模板 ▾')
           .fontSize(12)
-          .fontColor('#4F46E5')
+          .fontColor(C_ACCENT)
           .padding({ left: 10, right: 10, top: 5, bottom: 5 })
           .layoutWeight(1)
           .backgroundColor('#FFFFFF')
-          .border({ width: 1, color: '#E6E8F0' })
+          .border({ width: 1, color: C_LINE })
           .borderRadius(8)
           .bindMenu(this.apiProviderMenu())
       }
       .width('100%')
 
       Row({ space: 8 }) {
-        Text('API 地址').fontSize(11).fontColor('#667085').width(64)
+        Text('API 地址').fontSize(11).fontColor(C_LABEL).width(64)
         TextInput({ text: this.apiUrl, placeholder: 'https://api.deepseek.com/v1' })
           .height(32)
           .fontSize(12)
@@ -4581,7 +2894,7 @@ struct Index {
       .width('100%')
 
       Row({ space: 8 }) {
-        Text('模型名').fontSize(11).fontColor('#667085').width(64)
+        Text('模型名').fontSize(11).fontColor(C_LABEL).width(64)
         TextInput({ text: this.apiModel, placeholder: '如 deepseek-chat / qwen-max / glm-4-plus' })
           .height(32)
           .fontSize(12)
@@ -4593,7 +2906,7 @@ struct Index {
       .width('100%')
 
       Row({ space: 8 }) {
-        Text('API Key').fontSize(11).fontColor('#667085').width(64)
+        Text('API Key').fontSize(11).fontColor(C_LABEL).width(64)
         TextInput({ text: this.apiKey, placeholder: '可选（云端服务需填 Key）' })
           .type(InputType.Password)
           .height(32)
@@ -4612,14 +2925,14 @@ struct Index {
           .height(30)
           .padding({ left: 12, right: 12 })
           .enabled(!this.apiBusy)
-          .backgroundColor('#F8FAFC')
+          .backgroundColor(C_ROW_BG)
           .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
+          .border({ width: 1, color: C_LINE })
           .borderRadius(8)
           .onClick(() => this.runApiTest())
         Text(this.apiTestState)
-          .fontSize(10)
-          .fontColor(this.apiTestState.startsWith('✅') ? '#0B7A3B' : C_BAD)
+          .fontSize(11)
+          .fontColor(this.apiTestState.startsWith('✅') ? C_OK : C_BAD)
           .layoutWeight(1)
           .maxLines(3)
       }
@@ -4633,7 +2946,7 @@ struct Index {
           .height(30)
           .backgroundColor('#FFFFFF')
           .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
+          .border({ width: 1, color: C_LINE })
           .borderRadius(8)
           .onClick(() => {
             this.apiDlgOpen = false;
@@ -4671,7 +2984,7 @@ struct Index {
           .fontSize(13)
           .height(30)
           .width(32)
-          .backgroundColor('#F8FAFC')
+          .backgroundColor(C_ROW_BG)
           .fontColor('#475467')
           .borderRadius(8)
           .onClick(() => this.shiftCopyMonth(-1))
@@ -4686,7 +2999,7 @@ struct Index {
           .fontSize(13)
           .height(30)
           .width(32)
-          .backgroundColor('#F8FAFC')
+          .backgroundColor(C_ROW_BG)
           .fontColor('#475467')
           .borderRadius(8)
           .onClick(() => this.shiftCopyMonth(1))
@@ -4694,7 +3007,7 @@ struct Index {
       .width('100%')
 
       Text('目标月已有工资项时会被覆盖；按出勤津贴会按目标月实际上班天数自动重算。')
-        .fontSize(10)
+        .fontSize(11)
         .fontColor(C_HINT)
         .width('100%')
       if (this.copyHint.length > 0) {
@@ -4708,7 +3021,7 @@ struct Index {
           .height(30)
           .backgroundColor('#FFFFFF')
           .fontColor('#475467')
-          .border({ width: 1, color: '#E6E8F0' })
+          .border({ width: 1, color: C_LINE })
           .borderRadius(8)
           .onClick(() => {
             this.copyDlgOpen = false;
@@ -4731,17 +3044,66 @@ struct Index {
     .shadow({ radius: 24, color: '#33000000', offsetY: 6 })
   }
 
-  /** 当前数据加密方式的简短描述（只读状态，不含任何密钥材料）。 */
+  /** 清空考勤确认（桌面版 QMessageBox.question「确定清空本月所有出勤状态与加班/请假记录吗？」）。 */
+  @Builder
+  clearDlg() {
+    Column({ space: 12 }) {
+      Text('清空考勤').fontSize(15).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
+      Text(`确定清空 ${this.book.year} 年 ${this.book.month} 月所有出勤状态与加班/请假记录吗？`)
+        .fontSize(12)
+        .fontColor(C_SUB)
+        .width('100%')
+      Text('清空后无法撤销（工资项与参数不受影响）。')
+        .fontSize(11)
+        .fontColor('#B54708')
+        .width('100%')
+      Row({ space: 10 }) {
+        Blank()
+        Button('取消')
+          .type(ButtonType.Normal)
+          .fontSize(12)
+          .height(30)
+          .backgroundColor('#FFFFFF')
+          .fontColor('#475467')
+          .border({ width: 1, color: C_LINE })
+          .borderRadius(8)
+          .onClick(() => {
+            this.clearDlgOpen = false;
+          })
+        Button('清空')
+          .type(ButtonType.Normal)
+          .fontSize(12)
+          .height(30)
+          .backgroundColor(C_BAD)
+          .fontColor('#FFFFFF')
+          .borderRadius(8)
+          .onClick(() => this.doClearAttendance())
+      }
+      .width('100%')
+    }
+    .width(380)
+    .padding(18)
+    .backgroundColor('#FFFFFF')
+    .borderRadius(14)
+    .shadow({ radius: 24, color: '#33000000', offsetY: 6 })
+  }
+
+  /** 存储 / 加密方式的简短描述（只读状态，不含任何密钥材料）。
+   *
+   * ⚠ 句式与桌面版 `app/main_window.py::_crypto_summary()` 对齐：
+   *   Windows 是「Windows DPAPI（由当前用户账户托管密钥，无密钥文件）」，
+   *   鸿蒙对应「HUKS AES-256-GCM（由系统密钥库托管密钥，不可导出，无密钥文件）」。
+   */
   private cryptoSummary(): string {
-    const st = this.store;
+    const st = this.settings;
     if (st === null) {
       return '检测失败：存储未初始化';
     }
     if (!st.cryptoOk()) {
       const err: string = st.cryptoError();
-      return err.length > 0 ? `未加密（明文存储）：${err}` : '未加密（明文存储）';
+      return err.length > 0 ? `API Key 未加密（明文降级）：${err}` : 'API Key 未加密（明文降级）';
     }
-    return 'HUKS AES-256-GCM · 密钥由系统密钥库托管（无密钥文件）';
+    return 'HUKS AES-256-GCM（由系统密钥库托管密钥，不可导出，无密钥文件）';
   }
 
   @Builder
@@ -4755,17 +3117,17 @@ struct Index {
         Text('GNU General Public License v3.0').fontSize(11).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
       }
       Row({ space: 4 }) {
-        Text('数据加密：').fontSize(11).fontColor(C_SUB)
+        Text('数据加密（仅 API Key）：').fontSize(11).fontColor(C_SUB)
         Text(this.cryptoSummary())
           .fontSize(11)
           .fontWeight(FontWeight.Bold)
-          .fontColor(this.store !== null && this.store.cryptoOk() ? '#0B7A3B' : '#C00000')
+          .fontColor(this.settings !== null && this.settings.cryptoOk() ? C_OK : C_BAD)
           .layoutWeight(1)
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
 
-      Divider().color('#E6E8F0')
+      Divider().color(C_LINE)
 
       Text('免责声明').fontSize(12).fontWeight(FontWeight.Bold).fontColor(C_TEXT).width('100%')
       Text('本软件为免费开源工具，仅作工资核算参考，不构成法律 / 税务 / 财务意见。\n' +
@@ -4775,12 +3137,13 @@ struct Index {
         .width('100%')
       Text('用于正式发薪前请务必人工复核。').fontSize(11).fontWeight(FontWeight.Bold).fontColor('#B54708').width('100%')
 
-      Divider().color('#E6E8F0')
-      Text('数据位置（按月加密存档）：').fontSize(11).fontColor(C_SUB).width('100%')
-      Text(this.store === null ? '—' : this.store.location())
-        .fontSize(10)
+      Divider().color(C_LINE)
+      Text('数据位置：').fontSize(11).fontColor(C_SUB).width('100%')
+      Text(this.dataPath.length > 0 ? this.dataPath : '—')
+        .fontSize(11)
         .fontColor(C_HINT)
         .width('100%')
+        .wordBreak(WordBreak.BREAK_ALL)
 
       Row({ space: 10 }) {
         Blank()
