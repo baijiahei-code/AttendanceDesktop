@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Windows 版构建实现（免安装目录 + Inno Setup 安装程序）。
+r"""Windows 版构建实现（免安装目录 + Inno Setup 安装程序）。
 
 使用前提：
   * 在仓库根目录执行：python scripts/pack_windows.py
@@ -7,21 +7,42 @@
   * 已建好 .venv 并 pip install -r requirements.txt（需含 pyinstaller）
   * 已安装 Inno Setup 6（默认自动探测，或用环境变量 ISCC 指定 ISCC.exe）
 
-步骤：环境检查 → 清理 → PyInstaller(spec) → InnoSetup → 复制免安装版 → 清理 build。
+步骤：环境检查 → 清理 → PyInstaller(spec) → InnoSetup → 复制免安装版
+      → 生成发行版附件（Setup exe + win64 zip）→ 清理 build。
 产物输出到 release/ 目录（该目录被 .gitignore 忽略，不入库）。
+
+⚠ PyInstaller 一律用「当前解释器 -m PyInstaller」调用，不用
+  ``.venv\Scripts\pyinstaller.exe``：后者是 pip 生成的启动器，里面嵌的是「生成时的
+  解释器绝对路径」，项目目录改名 / 换机器 / 拷贝 venv 后会报
+  ``Fatal error in launcher: Unable to create process``（与代码无关）。
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent   # 项目根（本脚本位于 scripts/ 下）
 PUB = ROOT / "release"
 SPEC = ROOT / "AttendanceDesktop.spec"
 ISS = ROOT / "installer.iss"
-PYEXE = ROOT / ".venv" / "Scripts" / "pyinstaller.exe"
+
+
+def read_iss(key: str, default: str) -> str:
+    """读 installer.iss 里的一个标量字段（版本号 / 输出名只在那一处定义）。"""
+    try:
+        text = ISS.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return default
+    m = re.search(rf"^\s*{key}\s*=\s*(.+?)\s*$", text, re.M)
+    return m.group(1).strip() if m else default
+
+
+APP_VERSION = read_iss("AppVersion", "1.0.0")
+SETUP_EXE = ROOT / read_iss("OutputDir", "release") / f"{read_iss('OutputBaseFilename', '工作考勤表_安装程序')}.exe"
 
 # —— 定位 ISCC.exe：环境变量 ISCC 优先，否则探测常见安装位置 ——
 ISCC = Path(os.environ["ISCC"]) if os.environ.get("ISCC") else None
@@ -44,14 +65,24 @@ if ISCC is None:
 print("=" * 62)
 print("  Attendance desktop - one-click build (Python driver)")
 print("=" * 62)
-for label, p in [("PyInstaller", PYEXE), ("Spec", SPEC), ("ISCC", ISCC), ("InnoScript", ISS)]:
+
+# ⚠ 用 -m 调 PyInstaller（见模块 docstring：.venv\Scripts\pyinstaller.exe 的启动器里
+#   嵌了旧路径，项目改名后必定挂）。这里先自检，缺了就给明确提示而不是一堆乱码报错。
+try:
+    import PyInstaller
+except ImportError:
+    print(f"[FATAL] 当前解释器没有 PyInstaller：{sys.executable}")
+    print("        请在项目根执行：pip install -r requirements.txt（或重建 .venv）")
+    sys.exit(1)
+print(f"  [OK] {'PyInstaller':10s} -> {PyInstaller.__version__}  ({sys.executable} -m PyInstaller)")
+for label, p in [("Spec", SPEC), ("ISCC", ISCC), ("InnoScript", ISS)]:
     if not p.exists():
         print(f"[FATAL] {label} not found: {p}")
         sys.exit(1)
     print(f"  [OK] {label:10s} -> {p}")
 
 # —— 清理 ——
-print("\n[0/3] Kill + Clean")
+print("\n[0/4] Kill + Clean")
 try:
     subprocess.run(["taskkill", "/F", "/IM", "AttendanceDesktop.exe"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -63,8 +94,8 @@ for d in [PUB / "AttendanceDesktop", ROOT / "build", ROOT / "dist"]:
         print(f"  Cleaned {d}")
 
 # —— PyInstaller ——
-print("\n[1/3] PyInstaller --noconfirm --clean AttendanceDesktop.spec")
-r = subprocess.run([str(PYEXE), "--noconfirm", "--clean", str(SPEC)],
+print("\n[1/4] PyInstaller --noconfirm --clean AttendanceDesktop.spec")
+r = subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", str(SPEC)],
                    cwd=str(ROOT), capture_output=True, text=True)
 tail = [l for l in r.stdout.splitlines() if l.strip()][-6:]
 for l in tail:
@@ -83,7 +114,7 @@ if not EXE.exists():
 print(f"  Produced -> {EXE}  ({EXE.stat().st_size / 1024 / 1024:.2f} MB)")
 
 # —— Inno Setup ——
-print("\n[2/3] ISCC installer.iss")
+print("\n[2/4] ISCC installer.iss")
 # 用文件重定向读取输出，避免控制台代码页解码崩溃（ISCC 中文输出为 UTF-8）
 out_txt = ROOT / "_iscc_out.tmp"
 err_txt = ROOT / "_iscc_err.tmp"
@@ -107,12 +138,37 @@ out_txt.unlink(missing_ok=True)
 err_txt.unlink(missing_ok=True)
 
 # —— 复制免安装版 ——
-print("\n[3/3] Copy dist/AttendanceDesktop -> release\\AttendanceDesktop")
+print("\n[3/4] Copy dist/AttendanceDesktop -> release\\AttendanceDesktop")
 PUB.mkdir(parents=True, exist_ok=True)
 DST = PUB / "AttendanceDesktop"
 if DST.exists():
     shutil.rmtree(DST)
 shutil.copytree(ROOT / "dist" / "AttendanceDesktop", DST)
+
+# —— 发行版附件（以前是发版时手工补的两步，现在一并做掉）——
+#   * AttendanceDesktop-Setup-v<版本>.exe —— Inno 产物改成 ASCII 名（下载不易乱码）
+#   * AttendanceDesktop-v<版本>-win64.zip —— 免安装目录，**含顶层目录**：解压后是
+#     AttendanceDesktop\AttendanceDesktop.exe（与 GitHub 上的历史附件同一结构）
+print("\n[4/4] Release assets (Setup exe + win64 zip)")
+if not SETUP_EXE.exists():
+    print(f"[FATAL] Inno 产物不存在：{SETUP_EXE}")
+    sys.exit(1)
+REL_SETUP = PUB / f"AttendanceDesktop-Setup-v{APP_VERSION}.exe"
+shutil.copy2(SETUP_EXE, REL_SETUP)
+print(f"  {REL_SETUP.name:42s} {REL_SETUP.stat().st_size / 1024 / 1024:8.2f} MB")
+
+REL_ZIP = PUB / f"AttendanceDesktop-v{APP_VERSION}-win64.zip"
+REL_ZIP.unlink(missing_ok=True)          # 目标已存在时 zipfile 会追加，必须先删
+files = sorted(p for p in DST.rglob("*") if p.is_file())
+with zipfile.ZipFile(REL_ZIP, "w", zipfile.ZIP_DEFLATED) as zf:
+    for f in files:
+        zf.write(f, arcname=f"{DST.name}/{f.relative_to(DST).as_posix()}")
+with zipfile.ZipFile(REL_ZIP) as zf:
+    n_entries = len(zf.namelist())
+if n_entries != len(files):
+    print(f"[FATAL] zip 条目数 {n_entries} != 目录文件数 {len(files)}")
+    sys.exit(1)
+print(f"  {REL_ZIP.name:42s} {REL_ZIP.stat().st_size / 1024 / 1024:8.2f} MB  ({n_entries} entries)")
 
 # —— 清理 build 临时目录 ——
 if (ROOT / "build").exists():
@@ -144,4 +200,5 @@ except Exception:
     proc.kill()
 print(f"  live 3s -> alive={alive}")
 
-print("\nBuild successful, total 3 stages = 0 exit code.")
+print("\nBuild successful, total 4 stages = 0 exit code.")
+print(f"发行版附件：{REL_SETUP.name} / {REL_ZIP.name}")

@@ -12,6 +12,8 @@ PyInstaller 不能交叉编译（Windows 上打不出 Linux 可执行文件）�
 
     Windows  ->  pack_windows.py  ->  release/AttendanceDesktop/        免安装目录
                                       release/工作考勤表_安装程序.exe    Inno 安装程序
+                                      release/AttendanceDesktop-Setup-<版本>.exe  发行版用（ASCII 名）
+                                      release/AttendanceDesktop-v<版本>-win64.zip 发行版用（含顶层目录）
     Linux    ->  pack_deb.py     ->  release/attendance-desktop_<版本>_<架构>.deb
                                       release/attendance-desktop_<版本>_<架构>.deb.sm3
                  pack_rpm.py     ->  release/attendance-desktop-<版本>-<release>.<架构>.rpm
