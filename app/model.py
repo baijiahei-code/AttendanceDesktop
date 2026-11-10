@@ -106,13 +106,13 @@ UNIT_ROLE_LABELS = {k: lab for k, lab, _, _ in UNIT_ROLES}
 UNIT_ROLE_CODE_LABELS = {k: c for k, _, c, _ in UNIT_ROLES}
 UNIT_ROLE_HINTS = {k: h for k, _, _, h in UNIT_ROLES}
 UNIT_ROLE_DEFAULT = "contract"
-# 工资代发银行：这一项的「编号」是联行号 / 账号，**不能**去企业信用查询站查，
+# 工资代发银行：这一项的「编号」是联行号 / 账号，不能去企业信用查询站查，
 # 所以页面把它那行的行尾按钮做成「复制」（见 pages_units）。
 UNIT_ROLE_BANK = "bank"
 
 # 「其他相关单位」= 非内置类型的落点：
-# 用户的要求是「自定义内容填在**名称**栏」——
-# 所以它**可选择**（在类型下拉里），但添加菜单里用「✏️ 自定义（填在名称栏）…」这个动作代替。
+# 用户的要求是「自定义内容填在名称栏」——
+# 所以它可选择（在类型下拉里），但添加菜单里用「✏️ 自定义（填在名称栏）…」这个动作代替。
 UNIT_ROLE_OTHER = "other"
 # 类型下拉用（= 11 个内置类型 + 其他相关单位）
 UNIT_SELECTABLE_KEYS = UNIT_ROLE_KEYS + [UNIT_ROLE_OTHER]
@@ -139,7 +139,7 @@ class RelatedUnit:
 
     * ``role``：类型 key（见 :data:`UNIT_ROLES`；不属于内置类型时用
       :data:`UNIT_ROLE_OTHER`「其他相关单位」）；
-    * ``name``：单位名称。**自定义的具体内容也写在这里**（类型选「其他相关单位」，
+    * ``name``：单位名称。自定义的具体内容也写在这里（类型选「其他相关单位」，
       名称写「补充医疗保险公司」）；
     * ``code``：统一社会信用代码；工资代发银行一行填联行号 / 账号。
     """
@@ -166,9 +166,9 @@ class RelatedUnit:
 
 
 def default_units() -> list["RelatedUnit"]:
-    """默认单位表：**内置类型各一行**（名称 / 编号留空，等用户填）。
+    """默认单位表：内置类型各一行（名称 / 编号留空，等用户填）。
 
-    ⚠ **不含**「其他相关单位」—— 那是「列表里都没有」的落点，
+    ⚠ 不含「其他相关单位」—— 那是「列表里都没有」的落点，
     需要时在「＋ 添加单位」里选「✏️ 自定义（填在名称栏）…」添加。
     """
     return [RelatedUnit(role=k) for k in UNIT_ROLE_KEYS]
@@ -269,7 +269,7 @@ class DayEntry:
     def is_weekend_dt(self, year: int, month: int) -> bool:
         """该日是否为自然周的周六 / 周日。
 
-        ⚠ 只看自然周，**不查调休表**（调休补班的周六在此仍算「周末」）。
+        ⚠ 只看自然周，不查调休表（调休补班的周六在此仍算「周末」）。
         使用方（均为“仅展示口径”，不影响三档加班工资 —— 那三个小时数由薪酬页手填）：
         * ``calc._count_attendance``：累计 ``Counts.weekend``（报表行）；
         * ``pages_calendar``：铺“周末休 / 工作日上班”的默认日历，以及逐日判断。
@@ -301,7 +301,7 @@ def _typed_fields() -> tuple[frozenset, frozenset, frozenset]:
 
     `from_dict()` 用它决定哪些字段需要走 `_safe_float` / `_safe_int` / `_safe_bool`
     解析，而不是直接把 JSON 里的值 setattr 上去（手改过的存档什么都可能有）。
-    ⚠ 本模块有 ``from __future__ import annotations`` → ``f.type`` 是**字符串**。
+    ⚠ 本模块有 ``from __future__ import annotations`` → ``f.type`` 是字符串。
     """
     global _MONTHBOOK_TYPE_FIELDS
     if _MONTHBOOK_TYPE_FIELDS is None:
@@ -347,7 +347,7 @@ class MonthBook:
 
     # —— 加班 / 个税 / 个人扣项 ——
     fixed_overtime_wage: float = 0.0     # 固定加班工资（不按小时算的）
-    # 三档加班小时：**由用户在薪酬页手工填写**（不按考勤自动推算）。
+    # 三档加班小时：由用户在薪酬页手工填写（不按考勤自动推算）。
     workday_ot_hours: float = 0.0        # 工作日加班小时（×1.5）
     restday_ot_hours: float = 0.0        # 休息日加班小时（×2）
     holiday_ot_hours: float = 0.0        # 法定节假日加班小时（×3）
@@ -363,9 +363,9 @@ class MonthBook:
     pay_items: list[PayItem] = field(default_factory=list)
 
     # ========= 相关单位不在这里 =========
-    # 相关单位（劳动合同签订 / 社保缴纳 / 工资发放 …… 涉及的公司）是**单位档案**，
+    # 相关单位（劳动合同签订 / 社保缴纳 / 工资发放 …… 涉及的公司）是单位档案，
     # 与月份无关 → 全月共用一份，存在 settings.json 的 "units"（见 storage.MonthStore）。
-    # 月度存档**不保存也不读取**它（老存档里残留的 units 键会被直接忽略）。
+    # 月度存档不保存也不读取它（老存档里残留的 units 键会被直接忽略）。
     # ===== 便捷 =====
     @property
     def n_days(self) -> int:
@@ -380,7 +380,7 @@ class MonthBook:
 
     # ===== 序列化 =====
     def to_dict(self) -> dict:
-        """转成可 JSON 化的 dict（**不包含相关单位**：它是全局数据，见上文）。"""
+        """转成可 JSON 化的 dict（不包含相关单位：它是全局数据，见上文）。"""
         d = {
             "year": self.year, "month": self.month, "note": self.note,
             "days": [{"day": x.day, "status": x.status, "mark": x.mark,

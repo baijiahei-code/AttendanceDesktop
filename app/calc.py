@@ -136,7 +136,7 @@ class Result:
     min_wage_status: str = ""              # 与月最低工资标准的比较结论
     work_time_legality: str = ""           # "违法" / "不违法"
     company_cost_status: str = ""          # 与非全日制小时最低工资的比较结论
-    # 判定结果本身（上面几个 status 是给界面 / 报表**显示**的文案）：
+    # 判定结果本身（上面几个 status 是给界面 / 报表显示的文案）：
     # 颜色、图标、徽章一律读下面两个布尔 —— 别再拿文案做子串匹配（文案一改颜色就会跟着错）
     min_wage_ok: bool = False              # 计入最低工资标准的工资 ≥ 月最低工资标准
     work_time_legal: bool = False          # 工时 / 加班是否合法（issues 为空）
@@ -162,7 +162,7 @@ def _monthly_tax(taxable: float) -> float:
 
 
 def compute(book: model.MonthBook) -> Result:
-    """核算一个月的工资与合规结果（**纯函数**：只读 book，不修改入参）。
+    """核算一个月的工资与合规结果（纯函数：只读 book，不修改入参）。
 
     计算顺序（后者依赖前者）：
         出勤统计 → 工时与加班分类 → 工资项归并 → 加班工资 → 应发（gross_wage）
@@ -174,7 +174,7 @@ def compute(book: model.MonthBook) -> Result:
           可能有 ±0.05 元的累积差。
         * 月计薪天数固定 `PAYABLE_DAYS` = 21.75；加班时薪 = 基数 ÷ (21.75 × 8)。
         * 「提供正常劳动天数」与缺勤天数的口径见 `_count_attendance`。
-        * 三档加班小时取 `book` 上的**手填值**（薪酬页填写），不按考勤自动推算；
+        * 三档加班小时取 `book` 上的手填值（薪酬页填写），不按考勤自动推算；
           逐日的 `overtime_hours` 只汇总成「月加班总时长」，用于合规判定。
         * 约定工作天数 ≤ 0 时不折算日薪 / 时薪（见下方「请假扣款」段）。
     """
@@ -339,7 +339,7 @@ def _count_attendance(book: model.MonthBook) -> Counts:
     * 各状态天数按 `_STATUS_COUNT_FIELDS` 累加（键与 `model.STATUS_LABELS` 对应）
     * `normal_labor_days`（提供正常劳动天数）= 上班 + 婚假 + 丧假 + 产假 + 年假
       + 法定节假日 + 其他视为提供正常劳动
-    * `diff_agreed_normal_labor` = 约定工作天数 − 提供正常劳动天数，**不 clamp**：
+    * `diff_agreed_normal_labor` = 约定工作天数 − 提供正常劳动天数，不 clamp：
       为负表示出勤超出约定，下游按 `> 0` 判断是否要按天扣款
     """
     c = Counts()

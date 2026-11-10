@@ -223,8 +223,10 @@ export class DayEntry {
   }
 
   /**
-   *return weekdayIndex(year, month, this.day)休表**（补班的周六在这里仍算「周末」）。
-   *   要按调休判断当天类型，请用 `holidays.dayKind()`。
+   * 该日是否为自然周的周六 / 周日。
+   *
+   * 只看自然周，不查调休表（补班的周六在这里仍算「周末」）；
+   * 要按调休判断当天类型，请用 `holidays.dayKind()`。
    */
   isWeekendDt(year: number, month: number): boolean {
     const days: number = daysFromCivil(year, month, this.day);

@@ -34,7 +34,7 @@ class ParamsPageMixin:
         self._params_cards: list[Card] = []
         # 模板条上的「修改类」控件（combo + 4 个按钮）—— 模板条自己也是 Card
         # （见下面 tpl.add_layout → 内部控件会被 set_locked 递归禁用），
-        # 这里再列一份是**双保险**，也是给「锁定只读」一个显式清单。
+        # 这里再列一份是双保险，也是给「锁定只读」一个显式清单。
         self._params_extra_modify_widgets: list = []
 
         # —— 🔒 只读模式提示横幅（锁定时才显示）——
@@ -325,7 +325,7 @@ class ParamsPageMixin:
         card = Card("备注 / 姓名", hint="用于区分历史月份")
         note = QLineEdit(b.note)
         note.setPlaceholderText("例如：张三 · 工资核算")
-        # textEdited 只在**用户输入**时触发 —— 套用模板回填（setText）不会反向触发保存
+        # textEdited 只在用户输入时触发 —— 套用模板回填（setText）不会反向触发保存
         # （与相关单位页的名称 / 编号框同一口径）
         note.textEdited.connect(self._on_note)
         card.add_widget(note)
@@ -333,9 +333,9 @@ class ParamsPageMixin:
         return card
 
     def _make_wage_card(self):
-        """工资与工时标准卡：省份+地区级联，切省/切区用**内置官方表**自动填最低工资。
+        """工资与工时标准卡：省份+地区级联，切省/切区用内置官方表自动填最低工资。
 
-        ⚠ 这里**不会**自动联网：取 API 数据必须用户点「🌐 联网查询」（两个来源各自独立）。
+        ⚠ 这里不会自动联网：取 API 数据必须用户点「🌐 联网查询」（两个来源各自独立）。
         """
         card = Card("工资与工时标准",
                     hint="选择工作地后自动填入内置官方标准；也可以点「联网查询」用 API 取数"
@@ -588,7 +588,7 @@ class ParamsPageMixin:
         form = QFormLayout(dlg)
 
         # OpenAI 兼容服务商模板（不含本地服务；「手动输入」可接任意 https 兼容端点）
-        # 注意：**没有「默认」服务商**，默认停在「手动输入」，用哪个由用户选
+        # 注意：没有「默认」服务商，默认停在「手动输入」，用哪个由用户选
         providers = [
             # (显示名, api_base, 该服务商常用 model)
             ("Agnes", "https://apihub.agnes-ai.com/v1", "agnes-2.5-flash"),
@@ -983,7 +983,7 @@ class ParamsPageMixin:
             for attr, spin in self._param_spins.items():
                 out[attr] = spin.value()
         if self._book is not None:
-            # 注意：相关单位**不进模板**（它跟参数模板无关）——单位表在「相关单位」页单独维护
+            # 注意：相关单位不进模板（它跟参数模板无关）——单位表在「相关单位」页单独维护
             out["note"] = self._book.note
         return out
 

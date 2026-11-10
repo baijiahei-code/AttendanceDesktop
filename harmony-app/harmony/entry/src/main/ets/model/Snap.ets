@@ -3,11 +3,11 @@
  *
  * 为什么要这一层（踩过的坑）：
  * ArkUI 的局部刷新只跟踪 `@State` 的赋值。`MonthBook` 是我们自己的纯 TS 类（不是
- * `@Observed`），直接让界面读 `this.book.xxx` 的话，改了模型**不会重绘**；
+ * `@Observed`），直接让界面读 `this.book.xxx` 的话，改了模型不会重绘；
  * `ForEach` 还会按 key 缓存旧组件，表现为「点状态没反应 / 换月不刷新」。
  *
  * 约定：任何改动都是「改模型 → 重新 `Snap.from()` → 整体赋值给 `@State snap`」，
- * 界面**只读 snap**，不再碰 book。
+ * 界面只读 snap，不再碰 book。
  */
 
 import { compute, MAX_DAILY_OVERTIME_H, MAX_MONTHLY_OVERTIME_HOURS, MAX_MONTHLY_WORK_DAYS, MAX_MONTHLY_WORK_HOURS, Result } from '../core/calc';

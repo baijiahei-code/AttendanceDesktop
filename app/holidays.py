@@ -87,7 +87,7 @@ def classify_day(key: str, *, statutory: set[str], rest: set[str],
                  makeup: set[str]) -> str | None:
     """把某个 "MM-DD" 归类为 ``statutory`` / ``rest`` / ``makeup``；普通日返回 None。
 
-    ⚠ **优先级全项目只有这一处**（法定 → 补班 → 放假），参数限定关键字传参，
+    ⚠ 优先级全项目只有这一处（法定 → 补班 → 放假），参数限定关键字传参，
     避免调用方把 rest / makeup 写反。
 
     为什么必须只有一份：正常数据里三者互斥，但联网查回来的数据是模型生成的，

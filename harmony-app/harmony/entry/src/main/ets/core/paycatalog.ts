@@ -1,7 +1,7 @@
 /**
  * 「添加工资项」预设目录（按工资项类型分组）。
  *
- * ⚠ 由 scripts/export_paycatalog.py 从桌面版 app/model.py 自动生成，**不要手改**。
+ * ⚠ 由 scripts/export_paycatalog.py 从桌面版 app/model.py 自动生成，不要手改。
  */
 
 /** 计入最低工资标准的工资（11 项） */

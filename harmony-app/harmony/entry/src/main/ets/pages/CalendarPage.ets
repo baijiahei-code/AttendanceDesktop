@@ -1,7 +1,7 @@
 /**
  * 考勤日历页（对应桌面版 `app/pages_calendar.py`）。
  *
- * 版式与桌面版一致：**操作条（4 颗按钮）与考勤统计小条都是页面级独立一行/一组**，
+ * 版式与桌面版一致：操作条（4 颗按钮）与考勤统计小条都是页面级独立一行/一组，
  * 月历卡里只有「标题 + 星期 + 日期格 + 图例」；右侧是选中日期的编辑面板。
  * 数据来自 `@Param snap`，所有编辑动作通过 `@Event` 回到外壳。
  */
@@ -57,7 +57,7 @@ export struct CalendarPage {
   }
 
   build() {
-    // 与桌面版一致：操作条是**页面级独立一行**（桌面版是 lay 里的 bar，不在月历卡里）。
+    // 与桌面版一致：操作条是页面级独立一行（桌面版是 lay 里的 bar，不在月历卡里）。
     // 放进卡里的话，卡只有左栏那么宽 → 四颗按钮必然溢出到卡片外面。
     Column({ space: 10 }) {
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.End }) {
@@ -106,7 +106,7 @@ export struct CalendarPage {
         .fontColor(C_HINT)
         .width('100%')
 
-      // 统计小条也是**页面级单独一组**（桌面版 cg = QGridLayout，5 个一行），不在月历卡里
+      // 统计小条也是页面级单独一组（桌面版 cg = QGridLayout，5 个一行），不在月历卡里
       Flex({ wrap: FlexWrap.Wrap }) {
         ForEach(this.snap.calStats, (s: CalStat) => {
           Text(`${s.label} ${s.value}`)

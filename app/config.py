@@ -1,6 +1,6 @@
 """集中存放「用户想改时只需要碰这一个文件」的常量。
 
-⚠️ 这里是「样式 / 数值」单一来源 —— 列在下面的常量都是**真被代码读到的**，
+⚠️ 这里是「样式 / 数值」单一来源 —— 列在下面的常量都是真被代码读到的，
 改了立刻生效。（改不生效的“看着像旋钮”的常量一律不留，避免浪费时间。）
 
 下列常量按用途分组，全部是「修改高频」的视觉/UI 参数：
@@ -8,7 +8,7 @@
 * :data:`TYPE_CHIP`         —— 4 类工资项的 chip 配色（短名 / 前景 / 浅底 / 边框）
 * :data:`PAYITEM_COL_WIDTHS`—— 工资项表格列宽（表头与数据行读同一份，见
   ``widgets/pay_item_list.py`` 与 ``widgets/pay_item_row.py``）
-* :data:`OVERTIME_RATE`     —— 加班三档的**显示文 / 配色**（显示文由 :data:`OT_RATE_*`
+* :data:`OVERTIME_RATE`     —— 加班三档的显示文 / 配色（显示文由 :data:`OT_RATE_*`
   派生，不单独存倍率 —— 倍率的唯一出处是下面那三个常量）
 * :data:`OK_COLOR` / :data:`BAD_COLOR` —— 「合规 / 违规」文本色（UI 与 Excel 共用）
 
@@ -37,7 +37,7 @@ TYPE_DOT: dict[str, str] = {k: v[1] for k, v in TYPE_CHIP.items()}
 # 想让「名称」列更宽？改 :data:`PAYITEM_COL_WIDTHS["name"]`。
 PAYITEM_COL_WIDTHS: dict[str, int] = {
     "type": 86,   # 类型 chip
-    # 名称列**恒为 stretch**（表头与数据行都传固定值 0/伸展因子 1），
+    # 名称列恒为 stretch（表头与数据行都传固定值 0/伸展因子 1），
     # 这里的 0 只是占位说明「不设固定宽度」——改数值不会生效。
     "name": 0,
     "std":  150,  # 标准（月固定/元/天）
@@ -45,7 +45,7 @@ PAYITEM_COL_WIDTHS: dict[str, int] = {
     "op":   36,   # 操作（删除按钮）
 }
 PAYITEM_ROW_BUTTON_HEIGHT: int = 30   # 行内按钮/chip 高度上限
-# 表头与数据行的左右内边距（像素）—— 必须是**同一个值**，否则列对不齐
+# 表头与数据行的左右内边距（像素）—— 必须是同一个值，否则列对不齐
 PAYITEM_ROW_PAD_X: int = 10
 
 
@@ -53,14 +53,14 @@ PAYITEM_ROW_PAD_X: int = 10
 # 想加一档「×4 病假」？复制一行就 OK。
 #   key     ：model / calc 中的小时字段后缀
 #   display ：卡片里展示的徽章文字
-#   OT_RATE_*：三档倍率的**唯一出处** —— ``calc.compute`` 用它算三档加班工资，
+#   OT_RATE_*：三档倍率的唯一出处 —— ``calc.compute`` 用它算三档加班工资，
 #             ``calc.overtime_rate_text`` 用它拼报表文案，改这里金额与文案同步变
 #   fg / bg ：徽章前景与底色
 OT_RATE_WORKDAY: float = 1.5
 OT_RATE_RESTDAY: float = 2.0
 OT_RATE_HOLIDAY: float = 3.0
 OVERTIME_RATE: dict[str, tuple[str, str, str]] = {
-    # (徽章文字, 前景色, 底色)；徽章文字由上面的 OT_RATE_* **派生** —— 改倍率时
+    # (徽章文字, 前景色, 底色)；徽章文字由上面的 OT_RATE_* 派生 —— 改倍率时
     # 徽章文字会自动跟着变（不会一个变一个不变）。
     # ⚠ 倍率的唯一出处就是 OT_RATE_*（calc 算钱、overtime_rate_text 拼文案都念它）；
     #    这里不再存一份倍率 —— 存了也会被当成“改了能改钱”的假旋钮。

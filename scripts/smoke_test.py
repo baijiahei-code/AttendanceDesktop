@@ -117,7 +117,7 @@ assert r_z2.leave_deduction_total == 0.0, r_z2.leave_deduction_total
 
 # 正常值不得被牵连（防「顺手把日薪一律清零」这类过度修复）
 # 口径：日薪 = 税后应发 / 约定工作天数；时薪固定按法定标准工作日 8h 折算
-#（与加班时薪基数 payable8 = 21.75 × 8 同口径，**不要**换成 hours_per_day）。
+#（与加班时薪基数 payable8 = 21.75 × 8 同口径，不要换成 hours_per_day）。
 b_n = model.create_book(2026, 9)
 b_n.agreed_work_days = 26.0
 b_n.pay_items = [model.PayItem(name="基本工资", type="wage", amount=8000)]
@@ -166,13 +166,13 @@ def _role_units(units, role):
     return [u for u in units if u.role == role]
 
 
-# ---- 相关单位：**全局数据（与月份无关）**，月度存档不存也不读它 ----
+# ---- 相关单位：全局数据（与月份无关），月度存档不存也不读它 ----
 assert not hasattr(b, "units"), "MonthBook 不应再有 units 字段"
 assert "units" not in b.to_dict(), "月度存档不该保存相关单位"
 _legacy_units = [model.RelatedUnit(role="contract", name="示例公司 A", code="91340000X"),
                  model.RelatedUnit(role="contract", name="示例公司 B"),
                  model.RelatedUnit(role="other", name="补充医疗保险公司")]
-# 旧存档里残留的 units 键**直接忽略**（没有自动迁移）
+# 旧存档里残留的 units 键直接忽略（没有自动迁移）
 b_legacy = model.MonthBook.from_dict(
     {**raw, "units": [u.to_dict() for u in _legacy_units]})
 assert not hasattr(b_legacy, "units"), "旧档里的 units 不该被读进来"
@@ -215,7 +215,7 @@ from app.storage import MonthStore  # noqa: E402
 _tmp_gu = tempfile.mkdtemp()
 store_gu = MonthStore(_tmp_gu)
 assert store_gu.load_units() == [], "全新数据目录：没有单位"
-# 月度存档里即使有 units 键也**不会被读进来**（迁移功能已删）
+# 月度存档里即使有 units 键也不会被读进来（迁移功能已删）
 _old_path = os.path.join(_tmp_gu, "2026-05.json")
 with open(_old_path, "w", encoding="utf-8") as _f:
     json.dump({**model.create_book(2026, 5).to_dict(),
@@ -258,7 +258,7 @@ from app.ui import (NAV_GROUPS, NO_MONTH_BAR_KEYS, PAGE_INDEX, PAGES)  # noqa: E
 assert len(PAGES) == 7, PAGES
 assert PAGE_INDEX["units"] == 1, PAGE_INDEX
 assert PAGE_INDEX["overview"] == 0, PAGE_INDEX
-# 侧栏分组：「相关单位」**不在「功 能」组里**，而是排在最前的独立入口（无分组标题）
+# 侧栏分组：「相关单位」不在「功 能」组里，而是排在最前的独立入口（无分组标题）
 _nav_keys = [k for _t, keys in NAV_GROUPS for k in keys]
 assert len(_nav_keys) == len(set(_nav_keys)) == len(PAGES), _nav_keys
 assert sorted(_nav_keys) == sorted(k for k, _ in PAGES), _nav_keys
@@ -317,7 +317,7 @@ print("sidebar layout OK")
 win.resize(1280, 860)
 win.show()
 win.store.save(b)  # 让年度汇总有真实数据
-# 相关单位是**全局**数据：先写进设置，再重建页面（切月不会变）
+# 相关单位是全局数据：先写进设置，再重建页面（切月不会变）
 win.store.save_units(_legacy_units)
 win._units_cache = None
 win._fill_units()
@@ -398,7 +398,7 @@ win2.close()
 shutil.rmtree(_tmp, ignore_errors=True)
 print("delete-sync OK")
 
-# ---- 相关单位页：默认按**内置类型各列一行**（不含其他相关单位）→ 改完立即存进设置 ----
+# ---- 相关单位页：默认按内置类型各列一行（不含其他相关单位）→ 改完立即存进设置 ----
 from app import pages_params, pages_units  # noqa: E402
 
 _N_TYPES = len(model.UNIT_ROLE_KEYS)      # 内置 11 类
@@ -426,7 +426,7 @@ win_u._add_unit_row("other")             # 「✏️ 自定义（填在名称栏
 assert [r.unit.role for r in win_u._unit_rows][:2] == ["contract", "contract"]
 assert win_u._unit_rows[-1].unit.role == "other"
 assert len(win_u._units_list()) == len(win_u._unit_rows) == _N_TYPES + 2
-# 全局单位：改动**立即**写 settings，且**不碰**月度存档
+# 全局单位：改动立即写 settings，且不碰月度存档
 _saved_units = store_u.load_settings()["units"]
 assert [u["role"] for u in _saved_units] == [r.unit.role for r in win_u._unit_rows]
 assert len(_saved_units) == _N_TYPES + 2
@@ -489,7 +489,7 @@ assert len(_blank_rows) == _N_TYPES - 1, [r.unit.role for r in _blank_rows]
 assert not any(u.name for u in win_u._units_list() if u.role in ("fund", "wage", "tax")), \
     "没填过的类型不会自己出现名称"
 
-# 删除一行：两边同步减少（删掉的行**不会**自己回来）
+# 删除一行：两边同步减少（删掉的行不会自己回来）
 win_u._remove_unit_row(win_u._unit_rows[1])
 assert len(win_u._units_list()) == len(win_u._unit_rows) == _N_TYPES + 1
 assert len(store_u.load_units()) == _N_TYPES + 1, "删除要落盘"
@@ -504,7 +504,7 @@ cust.name.setText("补充医疗保险公司")
 win_u._sync_unit_row(cust)
 assert _role_units(win_u._units_list(), "other")[0].name == "补充医疗保险公司"
 
-# ---- 相关单位**不参与参数模板**（用户 2026-10-13：它和套用模板也无关）----
+# ---- 相关单位不参与参数模板（用户 2026-10-13：它和套用模板也无关）----
 pages_params.QInputDialog.getText = staticmethod(lambda *a, **kw: ("单位模板", True))
 win_u._save_template()
 _tpl = next(t for t in win_u._load_templates() if t["name"] == "单位模板")
@@ -525,7 +525,7 @@ win_u.tpl_combo.setCurrentText(_tpls[0]["name"])
 win_u._apply_template()
 assert [r.unit.name for r in win_u._unit_rows] == _units_before, "旧模板里的 units 键要被忽略"
 
-# ---- 顶部「月份锁定」与本页**无关**（数据不在月份里）→ 本页仍可编辑 ----
+# ---- 顶部「月份锁定」与本页无关（数据不在月份里）→ 本页仍可编辑 ----
 win_u._book.locked = True
 win_u._apply_lock_state(True)
 assert win_u._is_locked is True
@@ -534,7 +534,7 @@ for _r in win_u._unit_rows:
     assert _r.role.isEnabled() and _r.name.isEnabled() and _r.code.isEnabled()
     assert _r.del_btn.isEnabled() and _r.action_btn.isEnabled()
 assert win_u._units_lock_banner.isHidden(), "本页不因月份锁定而挂只读横幅"
-# 锁定的月份里改单位：能改、能存，而且**只写 settings、不碰月度存档**
+# 锁定的月份里改单位：能改、能存，而且只写 settings、不碰月度存档
 _lk_row = next(r for r in win_u._unit_rows if r.unit.role == "contract")
 _month_before = store_u.load(2026, 8).to_dict()
 _lk_row.name.setText("锁定月改的公司")
@@ -547,7 +547,7 @@ win_u._book.locked = False
 win_u._apply_lock_state(False)
 assert win_u._add_unit_btn.isEnabled()
 
-# ---- 单位登记表**自己的锁**：锁定后不可改 / 不可增删，但 🔍 仍可搜索 ----
+# ---- 单位登记表自己的锁：锁定后不可改 / 不可增删，但 🔍 仍可搜索 ----
 win_u._units_lock_btn.click()
 assert win_u._units_is_locked() is True
 for _r in win_u._unit_rows:
@@ -583,7 +583,7 @@ assert win_u._add_unit_btn.isEnabled(), "月份锁不该拦住本页（数据不
 win_u._book.locked = False
 win_u._apply_lock_state(False)
 
-# ---- 单位登记表那把锁**持久化**（用户 2026-10-14：重启软件后锁就没了）----
+# ---- 单位登记表那把锁持久化（用户 2026-10-14：重启软件后锁就没了）----
 assert store_u.load_settings().get("units_locked") is False, "解锁态也应落盘"
 win_u._units_lock_btn.click()                        # 锁上 → 写进 settings.json
 assert win_u._units_is_locked() is True
@@ -684,7 +684,7 @@ try:
     win_u._sync_unit_row(_c2)
     assert _c2.unit.name == "补充医疗保险公司"
 
-    # ---- 「🔍 去搜索」：**优先统一社会信用代码**（没填则用名称）；两站可切换 ----
+    # ---- 「🔍 去搜索」：优先统一社会信用代码（没填则用名称）；两站可切换 ----
     _opened: list[str] = []
     _orig_open = pages_units.QDesktopServices.openUrl
     pages_units.QDesktopServices.openUrl = staticmethod(
@@ -732,7 +732,7 @@ try:
         _blank.action_btn.click()
         assert len(_opened) == _n_before, "没填名称/编号时不应打开站点"
 
-        # ---- 工资代发银行行：行尾是「📋 复制」，**一次复制两个值**（名称 + 联行号）----
+        # ---- 工资代发银行行：行尾是「📋 复制」，一次复制两个值（名称 + 联行号）----
         _bank = next(r for r in win_u._unit_rows if r.unit.role == "bank")
         assert _bank.action_btn.text() == "📋", _bank.action_btn.text()
         assert "复制" in _bank.action_btn.toolTip()
@@ -778,7 +778,7 @@ try:
         pages_units.QDesktopServices.openUrl = _orig_open
 finally:
     pages_units.QMenu = _orig_menu
-# 「相关单位」页**没有**月份操作条：不是 setVisible 藏起来，而是从主栏布局里摘掉
+# 「相关单位」页没有月份操作条：不是 setVisible 藏起来，而是从主栏布局里摘掉
 win_u._show_page(PAGE_INDEX["units"])
 for _ in range(4):
     app.processEvents()
@@ -1007,7 +1007,7 @@ locked_widgets += [w for w in win4._params_extra_modify_widgets if w is not None
 # 5 张 Card 内部所有可交互控件（Card 框架统一管理）
 for card in getattr(win4, "_params_cards", []):
     locked_widgets += card.iter_tracked_widgets()
-# 相关单位卡：**不列入通用断言** —— 它内部有「🔍 去搜索」与锁按钮两个
+# 相关单位卡：不列入通用断言 —— 它内部有「🔍 去搜索」与锁按钮两个
 # 只读动作在锁定时仍须可用，所以单独在下面 6c) 里逐控件断言。
 locked_widgets += [w for w in win4._param_spins.values()]
 locked_widgets += [win4._fill_agreed_btn, win4._api_settings_btn,
@@ -1042,7 +1042,7 @@ for _bn in (win4._params_lock_banner, win4._calendar_lock_banner,
             win4._salary_lock_banner):
     assert not _bn.isHidden(), "锁定月各页只读横幅都应显示"
 
-# 6c) 相关单位与月份无关 → 整月锁定时本页**照常可编辑**（只由它自己的锁控制）
+# 6c) 相关单位与月份无关 → 整月锁定时本页照常可编辑（只由它自己的锁控制）
 assert win4._add_unit_btn.isEnabled(), "相关单位不受月份锁定影响"
 assert win4._unit_rows, "单位表里应有单位（见 store3.save_units 夹具）"
 for _r in win4._unit_rows:
@@ -1235,7 +1235,7 @@ print("UI OK")
 
 # ---- 打包依赖映射自检：deb ↔ rpm 的包名绝不能混用 ----
 # 回归背景：RPM 体系的包名与 Debian 不同，曾把 libxcb-cursor0 直接“翻译”成 libxcb-cursor，
-# 而 openEuler 里**没有**这个包（正确的是 xcb-util-cursor，且只在 EPOL 仓库）——
+# 而 openEuler 里没有这个包（正确的是 xcb-util-cursor，且只在 EPOL 仓库）——
 # dnf 会静默跳过缺失的建议依赖，于是装完 Qt 的 xcb 插件起不来。
 # 这里冻结几个已逐项核对过目标仓库的映射，防止再次带着错的包名发布。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1334,7 +1334,7 @@ def _http_err(code, body=""):
 try:
     _wages.urllib.request.urlopen = _fake_urlopen
 
-    # 取消默认 API 后：**没有模型名就不发请求**，所以测试里的联网调用都显式带模型名
+    # 取消默认 API 后：没有模型名就不发请求，所以测试里的联网调用都显式带模型名
     _MODEL = "test-model"
 
     # ① json_mode 首次带 response_format；服务端拒绝则去掉重试
@@ -1367,7 +1367,7 @@ try:
     _data, _err = _wages._try_chat_api("https://a.com/v1", "k", 2026, 5, "安徽", "池州",
                                        api_model=_MODEL)
     assert _data and _data["min_wage"] == 2170 and _err is None, (_data, _err)
-    # 取消默认 API 后：没填模型名 → 直接报错，且**一个请求都不发**
+    # 取消默认 API 后：没填模型名 → 直接报错，且一个请求都不发
     _calls.clear()
     _ok, _msg = _wages.test_connection("https://a.com/v1", "k")
     assert not _ok and "模型名" in _msg and len(_calls) == 0, (_ok, _msg, len(_calls))
@@ -1469,7 +1469,7 @@ while _time.monotonic() < _deadline and not _seen:
     _app2.processEvents()
     _time.sleep(0.01)
 # 契约（2026-10-07 修正）：cancel() 只拦「结果类」回调（done / failed），
-# on_finished **必须照常执行** —— 各页面靠它把「查询中…」按钮恢复可用，
+# on_finished 必须照常执行 —— 各页面靠它把「查询中…」按钮恢复可用，
 # 旧实现把 _finish() 一起跳过 → 按钮永远卡在禁用态、_ACTIVE 还会泄漏。
 assert _seen == ["finished"], f"取消后只应执行 finished：{_seen}"
 assert _call not in _worker._ACTIVE, "取消后必须从 _ACTIVE 里摘掉（否则泄漏）"

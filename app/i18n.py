@@ -1,13 +1,13 @@
 """Qt 内置文案的简体中文化（右键菜单、对话框按钮等）。
 
-应用自己写的界面文字本来就是中文，但 **Qt 框架自带的字符串**不在其中：
+应用自己写的界面文字本来就是中文，但 Qt 框架自带的字符串不在其中：
 
 - 输入框 / 文本框右键菜单的「撤消 / 重做 / 剪切 / 复制 / 粘贴 / 删除 / 全选」
 - `QMessageBox` 的「确定 / 取消 / 是 / 否」等标准按钮
 - `QFileDialog` / `QColorDialog` 等标准对话框的按钮
 
-它们来自 Qt 自带的翻译文件（`qtbase_zh_CN.qm`），**必须显式 `QTranslator.load()` +
-`QApplication.installTranslator()` 才会生效**，否则界面上会中英混杂
+它们来自 Qt 自带的翻译文件（`qtbase_zh_CN.qm`），必须显式 `QTranslator.load()` +
+`QApplication.installTranslator()` 才会生效，否则界面上会中英混杂
 （例如右键菜单显示 Undo / Redo / Copy）。
 
 用法（启动时调用一次）::
@@ -15,7 +15,7 @@
     app = QApplication(sys.argv)
     install_qt_translations(app)     # 翻译器以 app 为父对象，引用不会丢
 
-本模块**无条件装中文**：软件界面只有中文一种语言，与系统区域设置无关。
+本模块无条件装中文：软件界面只有中文一种语言，与系统区域设置无关。
 """
 from __future__ import annotations
 

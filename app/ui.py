@@ -39,19 +39,19 @@ PAGES = [
     ("report", "📊  报表"),
     ("annual", "📆  年度汇总"),
 ]
-# 页面 key → 索引。**不要在各处写死数字** —— 页面顺序一变就全错。
+# 页面 key → 索引。不要在各处写死数字 —— 页面顺序一变就全错。
 PAGE_INDEX = {key: i for i, (key, _) in enumerate(PAGES)}
 
-# 左侧导航的**分组**：只决定显示顺序与分组标题，页面索引仍由 PAGES 决定。
+# 左侧导航的分组：只决定显示顺序与分组标题，页面索引仍由 PAGES 决定。
 # 第一组没有标题 —— 「相关单位」是单位档案性质的独立入口（不随月份走），
-# 刻意放在「功 能」分组**之外**（用户 2026-10-13 要求）。
-# ⚠ 每个 key 必须**恰好出现一次**（smoke_test 里有断言，新页面别漏加）。
+# 刻意放在「功 能」分组之外（用户 2026-10-13 要求）。
+# ⚠ 每个 key 必须恰好出现一次（smoke_test 里有断言，新页面别漏加）。
 NAV_GROUPS = (
     ("", ("units",)),
     ("功 能", ("overview", "calendar", "salary", "params", "report", "annual")),
 )
 
-# **没有「月份操作条」的页面**（上月 / 月份 / 锁定 / 下月 / 删除本月）。
+# 没有「月份操作条」的页面（上月 / 月份 / 锁定 / 下月 / 删除本月）。
 # 「相关单位」与月份无关（单位表全月共用一份）→ 该页直接从主栏布局里摘掉月份条。
 # 与 PAGES / NAV_GROUPS 放在一起，页面归属变化只改这一行。
 NO_MONTH_BAR_KEYS = frozenset({"units"})
@@ -119,7 +119,7 @@ def set_lock_button_state(btn, locked: bool) -> None:
 class ReflowScrollArea(QScrollArea):
     """视口宽度变化时回调的 ``QScrollArea``（用于按可用宽度重排页面）。
 
-    回调在 **视口** 尺寸变化时触发（已扣除滚动条与边框），因此滚动条出现 /
+    回调在 视口 尺寸变化时触发（已扣除滚动条与边框），因此滚动条出现 /
     消失引起的可用宽度变化也能被感知到。回调参数为视口宽度（逻辑像素）。
 
     用途：参数页的 4 张卡片在窄窗口（笔记本）下需要由两列改为单列堆叠，
@@ -194,7 +194,7 @@ class ResponsiveColumns(QWidget):
 def make_lock_banner(text: str | None = None, parent=None) -> QLabel:
     """只读提示横幅（默认文案是「整月锁定」，可传自定义文案），默认隐藏。
 
-    传了自定义文案的页面（目前只有「相关单位」，见 ``pages_units``）文案**恒定**，
+    传了自定义文案的页面（目前只有「相关单位」，见 ``pages_units``）文案恒定，
     只切显隐：它不归月份锁管，只有自己那把锁（该页的 🔒）。
     """
     lab = QLabel(text or LOCK_BANNER_TEXT, parent)

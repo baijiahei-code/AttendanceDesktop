@@ -5,11 +5,11 @@
  *  * 金额字段一律过 `pyRound2`（Decimal(str) + HALF_UP），中间步骤也规整；
  *  * 非金额字段过 `pyRound6`（= Python round(v, 6)）；
  *  * 月计薪天数固定 21.75；加班时薪 = 基数 ÷ (21.75 × 8)；
- *  * 三档加班小时取账本上的**手填值**，逐日 `overtime_hours` 只汇总成
+ *  * 三档加班小时取账本上的手填值，逐日 `overtime_hours` 只汇总成
  *    「月加班总时长」用于合规判定；
  *  * 约定工作天数 ≤ 0 时不折算日薪/时薪（宁可少扣不错扣）。
  *
- * `compute` 是**纯函数**：只读 book，不修改入参。
+ * `compute` 是纯函数：只读 book，不修改入参。
  */
 
 import { MonthBook, PAYITEM_FIXED_ALLOW, PAYITEM_PERDAY_ALLOW, PAYITEM_SUBSIDY, PAYITEM_WAGE } from './model';
@@ -362,7 +362,7 @@ function bump(c: Counts, field: string): void {
  *
  * * `normal_labor_days`（提供正常劳动天数）= 上班 + 婚假 + 丧假 + 产假 + 年假
  *   + 法定节假日 + 其他视为提供正常劳动
- * * `diff_agreed_normal_labor` = 约定工作天数 − 提供正常劳动天数，**不 clamp**
+ * * `diff_agreed_normal_labor` = 约定工作天数 − 提供正常劳动天数，不 clamp
  */
 export function countAttendance(book: MonthBook): Counts {
   const c: Counts = new Counts();

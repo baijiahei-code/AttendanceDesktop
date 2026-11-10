@@ -51,7 +51,7 @@ class CalendarPageMixin:
         api_fill_btn.setToolTip(
             "只调用你在「⚙️ API 设置」里配的 API 获取某年节假日/调休安排"
             "（失败会直接提示原因，不会改用内置表）；\n"
-            "按官方安排**覆盖**周末、法定节假日、调休三类日期的状态，并把「法定节假日」"
+            "按官方安排覆盖周末、法定节假日、调休三类日期的状态，并把「法定节假日」"
             "标记整月重写（只有法定日为 1）；其余日期的状态不动。")
         api_fill_btn.setStyleSheet(
             "QPushButton{background:#ECFDF5;color:#065F46;border:1px solid #A7F3D0;"
@@ -62,7 +62,7 @@ class CalendarPageMixin:
         local_holiday_btn = QPushButton("📋 铺本地表（法定节假日/调休）")
         local_holiday_btn.setToolTip(
             "用软件内置的国务院节假日/调休安排铺设（不联网）；\n"
-            "按官方安排**覆盖**周末、法定节假日、调休三类日期的状态，并把「法定节假日」"
+            "按官方安排覆盖周末、法定节假日、调休三类日期的状态，并把「法定节假日」"
             "标记整月重写（只有法定日为 1）；其余日期的状态不动。")
         local_holiday_btn.setStyleSheet(
             "QPushButton{background:#F5F3FF;color:#5B21B6;border:1px solid #DDD6FE;"
@@ -451,7 +451,7 @@ class CalendarPageMixin:
           - statutory 法定节假日 → 强制 status=休息 + mark=1（×3加班）
           - rest 放假调休日（除法定已处理） → 强制 status=休息
           - 周末 → 强制 status=休息
-        已填日期 **会被覆盖**（节假日/调休类日期需要精确值）。
+        已填日期 会被覆盖（节假日/调休类日期需要精确值）。
 
         网络请求放后台线程：API 可能等十几秒，同步调用会让界面冻结。
         """
@@ -494,12 +494,12 @@ class CalendarPageMixin:
     def _apply_holidays(self, y: int, m: int, data: dict | None):
         """后台取回节假日后在主线程铺设（含月份切换保护）。
 
-        ⚠ **铺设是「覆盖」**：
-        * **状态**：落在铺设范围内的三类日期（法定 / 放假调休 / 补班）+ 普通周末会被重写；
+        ⚠ 铺设是「覆盖」：
+        * 状态：落在铺设范围内的三类日期（法定 / 放假调休 / 补班）+ 普通周末会被重写；
           范围之外的日期状态不动（保留用户手填的请假 / 缺勤等）。
-        * **「法定节假日」标记**：整月按本次数据重写 —— 只有法定日 `mark=1`，**其余全部清 0**。
+        * 「法定节假日」标记：整月按本次数据重写 —— 只有法定日 `mark=1`，其余全部清 0。
           否则一旦被错误数据（旧版 API 实测把 2025 春节当成 2026 的）标过 `mark=1`，
-          之后拿**正确**数据重铺也洗不掉，`calc` 的「法定节假日」天数与报表会一直错。
+          之后拿正确数据重铺也洗不掉，`calc` 的「法定节假日」天数与报表会一直错。
         """
         if self._book is None:
             return
@@ -531,7 +531,7 @@ class CalendarPageMixin:
             old_status = d.status
             old_mark = d.mark
             new_status = None
-            # 「法定节假日」标记由本次铺设**整月重写**（只有法定日 1，其余一律 0）
+            # 「法定节假日」标记由本次铺设整月重写（只有法定日 1，其余一律 0）
             new_mark = 0
             # 归类只调 holidays.classify_day（与内置官方表同一条优先级）
             kind = holidays.classify_day(key, statutory=statutory, rest=rest,

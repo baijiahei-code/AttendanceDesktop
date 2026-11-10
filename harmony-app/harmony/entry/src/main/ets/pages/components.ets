@@ -286,7 +286,7 @@ export struct UnitRowView {
     return i < 0 ? UNIT_SELECTABLE_KEYS.length - 1 : i;
   }
 
-  /** 搜索关键词：**优先统一社会信用代码**（唯一、精确），没填则用单位名称（同桌面版）。
+  /** 搜索关键词：优先统一社会信用代码（唯一、精确），没填则用单位名称（同桌面版）。
    *  用本地副本取值，所以刚敲完一个字就能用（不必等父级回写）。 */
   private term(): string {
     const code: string = this.codeText.trim();
@@ -396,7 +396,7 @@ export struct UnitRowView {
           .borderRadius(7)
           .onClick(() => this.onAction('copy'))
       } else {
-        // 关键词为空时**不弹菜单**，直接提示（与桌面版 _open_unit_search_menu 一致）；
+        // 关键词为空时不弹菜单，直接提示（与桌面版 _open_unit_search_menu 一致）；
         // 有词才绑菜单，所以这里必须写成两个分支：修饰器不能条件绑定。
         if (this.term().length === 0) {
           Button('🔍')

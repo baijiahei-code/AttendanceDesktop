@@ -1,16 +1,16 @@
 /**
  * Python 兼容数值工具。
  *
- * 桌面版 `app/calc.py` 里存在**两个不同口径**的取整，移植时严禁混用：
+ * 桌面版 `app/calc.py` 里存在两个不同口径的取整，移植时严禁混用：
  *
  * 1. `_round2(v)` —— 金额专用：
  *    `float(Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))`
- *    ⚠ 关键点：它先取**最短十进制表示**（`str(v)`）再做 HALF_UP，
+ *    ⚠ 关键点：它先取最短十进制表示（`str(v)`）再做 HALF_UP，
  *      所以 443.835 → 443.84（尽管二进制的精确值是 443.83499…）。
- *      而且它**不是** Python 内置 round() 的银行家舍入：2.675 → 2.68。
+ *      而且它不是 Python 内置 round() 的银行家舍入：2.675 → 2.68。
  *
  * 2. `_f(v)` —— 小时数 / 天数 / 比例专用：`round(float(v), 6)`
- *    这是 Python 内置 round()，语义是「对**二进制精确值**做 round-half-to-even」，
+ *    这是 Python 内置 round()，语义是「对二进制精确值做 round-half-to-even」，
  *    所以 0.1234565 → 0.123456（精确值 0.1234564999…）。
  *
  * 两个函数都按 IEEE 754 的精确语义实现，避免 JS 里 `toFixed` / `Math.round`
@@ -165,7 +165,7 @@ export function pyRound6(v: number | null | undefined): number {
 }
 
 /**
- * 等价于 Python 的 `f"{v:.Nf}"`（**half-to-even**，对二进制精确值取整）。
+ * 等价于 Python 的 `f"{v:.Nf}"`（half-to-even，对二进制精确值取整）。
  *
  * ⚠ 不能用 `toFixed`：`(2.25).toFixed(1)` 在 V8 里给 "2.3"，而 Python 的
  * `f"{2.25:.1f}"` 给 "2.2"。报表文案要求逐字一致，所以自己算。

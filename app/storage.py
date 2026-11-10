@@ -10,8 +10,8 @@ Windows 用 DPAPI，非 Windows 用国密 SM2/SM3/SM4；既有的 ``dpapi:`` 密
 明文写法都保持向后兼容。
 
 文件权限：POSIX 平台（信创 / Linux）把数据目录收紧到 ``700``、数据文件 ``600`` ——
-否则 ``umask 002`` 的桌面发行版会写出 ``775/664``，**同机其他用户可直接读取考勤与
-工资数据**（Windows 无此问题：%LOCALAPPDATA% 的 ACL 本身按用户隔离）。
+否则 ``umask 002`` 的桌面发行版会写出 ``775/664``，同机其他用户可直接读取考勤与
+工资数据（Windows 无此问题：%LOCALAPPDATA% 的 ACL 本身按用户隔离）。
 排障时可用 ``ATT_PERMS=off`` 临时关闭这套收紧逻辑。
 """
 from __future__ import annotations
@@ -148,8 +148,8 @@ class MonthStore:
     def load(self, year: int, month: int) -> model.MonthBook | None:
         """读取某月存档。
 
-        :return: ``None`` 有**两种**含义 —— ① 该月尚无存档文件；② 文件存在但解析失败。
-            后一种情况下 :attr:`last_error` 带异常文本，且**原文件不会被删除**
+        :return: ``None`` 有两种含义 —— ① 该月尚无存档文件；② 文件存在但解析失败。
+            后一种情况下 :attr:`last_error` 带异常文本，且原文件不会被删除
             （留给 UI 提示，避免「看起来是新月份」掩盖数据损坏）。
         """
         path = self._file(year, month)
@@ -209,9 +209,9 @@ class MonthStore:
     def load_settings(self) -> dict:
         """读取应用设置（带缓存；返回副本，调用方可自由修改后自行保存）。
 
-        ⚠ 解析失败**不静默当成空设置**：记 :attr:`last_error` + 打印 traceback +
+        ⚠ 解析失败不静默当成空设置：记 :attr:`last_error` + 打印 traceback +
         尝试从 ``settings.json.bak`` 恢复。静默返回 ``{}`` 很危险 —— 后续任何一次保存
-        （改相关单位 / 单位表锁）都会以空字典为基底**整文件覆写**，把 api_url /
+        （改相关单位 / 单位表锁）都会以空字典为基底整文件覆写，把 api_url /
         api_key / province 等设置永久抹掉（月份存档好歹还有 .bak）。
         """
         path = self._settings_path()
@@ -245,7 +245,7 @@ class MonthStore:
     def _recover_settings(self) -> dict:
         """``settings.json`` 损坏时的兜底：从 ``settings.json.bak`` 读回（没有就 ``{}``）。
 
-        ⚠ 只在主文件解析失败时调用 —— 返回的内容会被下一次保存**原样写回**主文件。
+        ⚠ 只在主文件解析失败时调用 —— 返回的内容会被下一次保存原样写回主文件。
         """
         try:
             with open(self._settings_path() + ".bak", "r", encoding="utf-8") as f:
@@ -258,7 +258,7 @@ class MonthStore:
         return {}
 
     def save_settings(self, data: dict) -> bool:
-        """保存应用设置：敏感字段透明加密后**原子**落盘，并同步缓存失效戳。
+        """保存应用设置：敏感字段透明加密后原子落盘，并同步缓存失效戳。
 
         写法与月份存档 :meth:`save` 一致（``.tmp`` → 备份 ``.bak`` → ``os.replace``）：
         直接截断覆写时若中途崩溃，会留下半个文件，下次启动读到非法 JSON
@@ -311,16 +311,16 @@ class MonthStore:
 
     # ========== 全局相关单位（与月份无关）==========
     #
-    # 相关单位（劳动合同签订 / 社保缴纳 / 工资发放 …… 涉及的公司）是**单位档案**，
+    # 相关单位（劳动合同签订 / 社保缴纳 / 工资发放 …… 涉及的公司）是单位档案，
     # 与具体月份无关：全月共用一份，只存在 settings.json 的 "units" 里，
-    # **不读也不写月度存档**（老存档里残留的 units 键直接忽略）。
+    # 不读也不写月度存档（老存档里残留的 units 键直接忽略）。
 
     UNITS_KEY = "units"
     # 「单位登记表自己的锁」也存这里（与月份无关；重启软件后保持）
     UNITS_LOCKED_KEY = "units_locked"
 
     def load_units(self) -> list[model.RelatedUnit]:
-        """读取全局相关单位（每次返回**新建的**对象，调用方可自由修改后自行 save_units）。
+        """读取全局相关单位（每次返回新建的对象，调用方可自由修改后自行 save_units）。
 
         ⚠ 「设置里没有这个键」与「空列表」都返回 ``[]`` —— 想区分「从未设置过」和
         「用户把单位删光了」请自己查 ``UNITS_KEY in load_settings()``
@@ -347,7 +347,7 @@ class MonthStore:
     def save_units_locked(self, locked: bool) -> bool:
         """把「单位登记表自己的锁」写进 settings.json（其它设置原样保留）。
 
-        ⚠ 存的是**布尔**（不是加密字段），重启软件后锁态仍在。
+        ⚠ 存的是布尔（不是加密字段），重启软件后锁态仍在。
         """
         settings = self.load_settings()
         settings[self.UNITS_LOCKED_KEY] = bool(locked)

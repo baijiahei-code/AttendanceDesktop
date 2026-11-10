@@ -1,7 +1,7 @@
 /**
  * OpenAI 兼容 Chat API 的纯逻辑层（对应桌面版 `app/wages.py` 的 API 部分）。
  *
- * 这里只做**纯函数**：端点拼接、错误码文案、JSON 提取、回复解析与合理性校验。
+ * 这里只做纯函数：端点拼接、错误码文案、JSON 提取、回复解析与合理性校验。
  * 真正的 HTTP 请求在 ArkTS 侧（`model/ApiClient.ets`），Node 测试可直接测本文件。
  */
 

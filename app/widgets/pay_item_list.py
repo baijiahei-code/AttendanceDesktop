@@ -29,7 +29,7 @@ class PayItemListWidget(QFrame):
     changed()
         任意一条工资项的 name / amount / type / 新增 / 删除引发该信号，外部做小计重算。
     insert_requested_at(int)
-        新行插入完成后发出，参数是**它在 rows 里的下标**（不是“最后一行” —— 按类型
+        新行插入完成后发出，参数是它在 rows 里的下标（不是“最后一行” —— 按类型
         分组插入时会插在中间）。外部据此把该行滚到可见区域。
     copy_requested()
         用户点了「复制工资项」，由外部弹出复制对话框。
@@ -201,7 +201,7 @@ class PayItemListWidget(QFrame):
     def ensure_visible_row(self, row: PayItemRow):
         """滚到指定行可见（聚焦时调用）。
 
-        ⚠ 本 widget 的直接父级**不是**滚动区（父链通常长成
+        ⚠ 本 widget 的直接父级不是滚动区（父链通常长成
         ``pay_items → ResponsiveColumns → salary_root(此层才是滚动区)``），
         所以必须沿父链往上找第一个能 ``ensureWidgetVisible`` 的控件；
         一路找不到就安静返回（不报错，也不假设层级）。

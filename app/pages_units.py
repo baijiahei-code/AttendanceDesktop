@@ -5,21 +5,21 @@
 社保代缴 / 工资代发等）。本页按类型（见 :data:`model.UNIT_ROLES`）分开登记
 名称与统一社会信用代码，便于核对责任主体、社保连续性与工龄。
 
-**同一类型可以有多家**（例如先后 / 同时签过多份劳动合同的单位）：每行都可改类型、
+同一类型可以有多家（例如先后 / 同时签过多份劳动合同的单位）：每行都可改类型、
 可增可删，行顺序即显示顺序。内置类型之外的单位选「其他相关单位」，具体是什么写在
-**名称**栏。
+名称栏。
 
-**与月份无关**：相关单位是「单位档案」，全月共用一份，只存在应用设置里
+与月份无关：相关单位是「单位档案」，全月共用一份，只存在应用设置里
 （``settings.json`` 的 ``units``）—— 切月不会变，本页也不显示月份操作条，
-**不读也不写月度存档**，也**不参与「参数」页的参数模板**（存 / 套模板都不动单位表）。
-全新安装时按**内置类型各列一行**（不含「其他相关单位」），
+不读也不写月度存档，也不参与「参数」页的参数模板（存 / 套模板都不动单位表）。
+全新安装时按内置类型各列一行（不含「其他相关单位」），
 空的直接填；同一类型的第二家 / 自定义单位用「＋ 添加单位」。
 
-**锁定**：只有**本页自己的锁**（卡片标题栏右侧的 🔒 按钮）能让它只读 ——
-顶部的「月份锁定」不影响本页（数据根本不在月份里）。锁态**持久化**在
-``settings.json`` 的 ``units_locked`` 里，**重启软件后仍然保持**
+锁定：只有本页自己的锁（卡片标题栏右侧的 🔒 按钮）能让它只读 ——
+顶部的「月份锁定」不影响本页（数据根本不在月份里）。锁态持久化在
+``settings.json`` 的 ``units_locked`` 里，重启软件后仍然保持
 （与单位表一样属于全局状态，不随月份走）。只读时名称 / 编号 / 增删都冻结，
-但 **「🔍 去搜索」仍然可用**（它只查外部网站，不改数据）。
+但 「🔍 去搜索」仍然可用（它只查外部网站，不改数据）。
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class _UnitRow:
 
     控件与 ``unit`` 一一对应，所以「改控件 → 写回 unit」不必再去列表里按类型查找。
     ``action_btn`` 是行尾动作按钮：普通单位是「🔍 去搜索」，
-    **工资代发银行**行是「📋 复制」（名称 + 联行号 / 账号一起复制，
+    工资代发银行行是「📋 复制」（名称 + 联行号 / 账号一起复制，
     联行号在那两个信用查询站里查不到）。
     """
 
@@ -113,8 +113,8 @@ class UnitsPageMixin:
     def _units_list(self) -> list[model.RelatedUnit]:
         """全局相关单位（与月份无关；首次访问时从 settings 读一次并缓存在内存）。
 
-        全新安装（设置里**没有** units 键）→ 按内置类型**各列一行**（名称 / 编号留空，
-        直接填）；一旦保存过就以存的那份为准 —— **删掉的行不会自己回来**。
+        全新安装（设置里没有 units 键）→ 按内置类型各列一行（名称 / 编号留空，
+        直接填）；一旦保存过就以存的那份为准 —— 删掉的行不会自己回来。
         返回的就是内部列表本身，调用方可直接增删改（改完调 :meth:`_save_units`）。
         """
         if self._units_cache is None:
@@ -127,9 +127,9 @@ class UnitsPageMixin:
     def _save_units(self) -> None:
         """单位表改动 → 写 settings.json。
 
-        **不碰月度存档**（相关单位与月份无关）：所以顶部的月份锁不会拦住它，
+        不碰月度存档（相关单位与月份无关）：所以顶部的月份锁不会拦住它，
         也不会让当前月份变成「有未保存改动」。settings.json 很小、单位也不是
-        高频输入，就**直接落盘**（不做防抖：避免切页 / 关窗时丢掉未落盘的改动）。
+        高频输入，就直接落盘（不做防抖：避免切页 / 关窗时丢掉未落盘的改动）。
         """
         if not self._units_ready():
             return
@@ -142,7 +142,7 @@ class UnitsPageMixin:
     def _make_units_card(self) -> Card:
         """「单位登记表」卡片：表头 + 行网格 + 空状态提示 + 按钮行。
 
-        ⚠ 表头（第 0 行）与数据行必须在**同一个网格**里 —— 两个独立网格的列宽不会对齐。
+        ⚠ 表头（第 0 行）与数据行必须在同一个网格里 —— 两个独立网格的列宽不会对齐。
         """
         card = Card("单位登记表",
                     hint="已按内置类型各列一行，空的直接填；同一类型可以有多家时点「＋ 添加单位」"
@@ -192,9 +192,9 @@ class UnitsPageMixin:
         return card
 
     def _units_is_locked(self) -> bool:
-        """单位登记表是否被**自己的锁**锁住。
+        """单位登记表是否被自己的锁锁住。
 
-        锁态**持久化**在 ``settings.json`` 的 ``units_locked``（重启软件后仍然保持），
+        锁态持久化在 ``settings.json`` 的 ``units_locked``（重启软件后仍然保持），
         所以首次访问时从设置里懒加载一次 —— 与 :meth:`_units_list` 同一思路。
         """
         if self._units_locked is None:
@@ -204,14 +204,14 @@ class UnitsPageMixin:
     def _units_ready(self) -> bool:
         """页面是否可用（重建过程中忽略交互）。
 
-        相关单位是**全局**数据（不在月份里）→ 不看 `_book` / `_is_locked`。
+        相关单位是全局数据（不在月份里）→ 不看 `_book` / `_is_locked`。
         """
         return not self._loading
 
     def _refresh_units_lock_ui(self) -> None:
-        """按**本页自己的锁**刷新：卡片可写控件禁用 + 横幅 + 锁按钮文案。
+        """按本页自己的锁刷新：卡片可写控件禁用 + 横幅 + 锁按钮文案。
 
-        两个**只读**动作在锁定时仍须可用（同「锁定月仍可导出 Excel」的口径）：
+        两个只读动作在锁定时仍须可用（同「锁定月仍可导出 Excel」的口径）：
         · 行尾按钮：🔍 去搜索 / 📋 复制，都不改数据；
         · 锁按钮自己 —— `Card.set_locked` 会把它一并禁用，不放行就再也解不开了。
         """
@@ -248,11 +248,11 @@ class UnitsPageMixin:
         return self._units_ready() and not self._units_is_locked()
 
     def _make_unit_row(self, u: model.RelatedUnit) -> _UnitRow:
-        """建一行：类型（下拉，**不可编辑**）+ 名称 + 编号 + 行尾动作 + 删除。
+        """建一行：类型（下拉，不可编辑）+ 名称 + 编号 + 行尾动作 + 删除。
 
         控件都绑定同一个 ``RelatedUnit``；行尾按钮的行为按类型定（见
         :meth:`_refresh_unit_row_action`）。「其它单位」不靠手打类型：
-        类型选「其他相关单位」，具体是什么写在**名称**栏。
+        类型选「其他相关单位」，具体是什么写在名称栏。
         """
         role = QComboBox()
         role.addItems([model.UNIT_ROLE_LABELS[k] for k in model.UNIT_SELECTABLE_KEYS])
@@ -282,7 +282,7 @@ class UnitsPageMixin:
         del_btn.setCursor(Qt.PointingHandCursor)
 
         row = _UnitRow(u, role, name, code, action_btn, del_btn)
-        # textEdited 只在**用户输入**时触发 → 代码里 setText（回填 / 重建）不会反向触发保存
+        # textEdited 只在用户输入时触发 → 代码里 setText（回填 / 重建）不会反向触发保存
         name.textEdited.connect(lambda _t, r=row: self._sync_unit_row(r))
         code.textEdited.connect(lambda _t, r=row: self._sync_unit_row(r))
         role.currentTextChanged.connect(lambda _t, r=row: self._on_unit_type_changed(r))
@@ -308,18 +308,18 @@ class UnitsPageMixin:
                 "优先复制「统一社会信用代码」（没填则用「单位名称」），粘到网站搜索框即可")
 
     def _on_unit_row_action(self, row: _UnitRow) -> None:
-        """行尾按钮：工资代发银行行是**复制**（两个值一起），其余行是**去搜索**。"""
+        """行尾按钮：工资代发银行行是复制（两个值一起），其余行是去搜索。"""
         if row.unit.role == model.UNIT_ROLE_BANK:
             self._copy_unit_values(row)
         else:
             self._open_unit_search_menu(row)
 
     def _copy_unit_values(self, row: _UnitRow) -> None:
-        """把这一行的**两个值都**复制到剪贴板（银行名称 + 联行号 / 账号，各占一行）。
+        """把这一行的两个值都复制到剪贴板（银行名称 + 联行号 / 账号，各占一行）。
 
         用户 2026-10-13 要求银行一次复制两个（填进银行回单 / 付款表单时两个都要用）；
         只填了其中一个时只复制那一个，都没填则只提示、不动剪贴板。
-        **只读**动作：与本页的锁无关，锁定时也允许（所以不看 _units_can_edit）。
+        只读动作：与本页的锁无关，锁定时也允许（所以不看 _units_can_edit）。
         """
         if not self._units_ready():
             return
@@ -334,7 +334,7 @@ class UnitsPageMixin:
     def _relayout_unit_rows(self) -> None:
         """按 ``self._unit_rows`` 的顺序重排网格（增 / 删行后调用）。
 
-        表头（第 0 行）与数据行在**同一个网格**里，列宽才能对齐。
+        表头（第 0 行）与数据行在同一个网格里，列宽才能对齐。
         """
         grid = getattr(self, "_units_grid", None)
         if grid is None:
@@ -371,7 +371,7 @@ class UnitsPageMixin:
         return row
 
     def _drop_unit_row(self, row: _UnitRow) -> None:
-        """从行列表与全局单位表里同时摘掉（按**对象身份**定位，同值对象不能按值删）。"""
+        """从行列表与全局单位表里同时摘掉（按对象身份定位，同值对象不能按值删）。"""
         for i, r in enumerate(self._unit_rows):
             if r is row:
                 del self._unit_rows[i]
@@ -386,10 +386,10 @@ class UnitsPageMixin:
     def _open_unit_search_menu(self, row: _UnitRow) -> None:
         """「🔍」→ 选一个站点去查这家单位（两个站点随时切换）。
 
-        关键词**优先用统一社会信用代码**（唯一、精确），没填则用单位名称。
+        关键词优先用统一社会信用代码（唯一、精确），没填则用单位名称。
         ⚠ 两站都不支持 URL 带关键词，所以是「复制关键词到剪贴板 + 打开站点」；
         上次用过的站点会在菜单里打勾（再点另一个就是切换）。
-        **只读**动作：与本页的锁无关，锁定时也允许（所以不看 _units_can_edit）。
+        只读动作：与本页的锁无关，锁定时也允许（所以不看 _units_can_edit）。
         """
         if not self._units_ready():
             return

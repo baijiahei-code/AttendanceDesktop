@@ -716,7 +716,7 @@ def get(province: str, region: str | None = None) -> tuple[float, float] | None:
     """返回 (月最低工资, 非全日制小时最低工资)。
 
     * ``region=None`` → 取该省第一个城市（“全省未细分”的场景）；
-    * 「指定了具体地区但表里查不到」→ 返回 ``None``（**不要静默换成别的城市**：
+    * 「指定了具体地区但表里查不到」→ 返回 ``None``（不要静默换成别的城市：
       那会把另一个地方的标准写进账本，还联动加班基数 / 公积金基数，用户看不出来）。
     """
     regions = _REGION_DATA.get(province)
@@ -728,18 +728,18 @@ def get(province: str, region: str | None = None) -> tuple[float, float] | None:
 
 
 # —— Chat API 接入：用 LLM 查询最低工资 ——
-# 策略（用户 2026-10-07 定）：内置表与 API 两个数据源**各自独立**，
+# 策略（用户 2026-10-07 定）：内置表与 API 两个数据源各自独立，
 # 由界面上的按钮决定用哪个：fetch_local / fetch_holidays_local 纯本地不联网，
 # fetch_wage_api / fetch_holidays_api 只走 API，两者之间不自动互相替代。
 # 省/市数据在上方 _XX_DATA / _XX_GRADEn 分块中定义，可随时编辑修改数值。
 # api_model：OpenAI 兼容服务的模型名（DeepSeek / 通义 / Kimi / 智谱 等），
-#   **只在「API 设置」里填写，没有内置默认值**（用户 2026-10-07：取消默认 api，选哪个用哪个）。
+#   只在「API 设置」里填写，没有内置默认值（用户 2026-10-07：取消默认 api，选哪个用哪个）。
 
 
 def _chat_model(api_model: str | None) -> str:
     """返回本次请求用的模型名。
 
-    **没有默认值**：以「API 设置」里填写的为准；没填就直接报错，
+    没有默认值：以「API 设置」里填写的为准；没填就直接报错，
     绝不隐式用某个内置模型发请求（用户 2026-10-07 口径）。
     """
     name = (api_model or "").strip()
@@ -990,7 +990,7 @@ def _extract_json(text: str) -> dict:
 
 
 def fetch_local(province: str, region: str | None = None) -> dict | None:
-    """【内置官方表】按省+地区取值，**纯本地、不联网**。
+    """【内置官方表】按省+地区取值，纯本地、不联网。
 
     用户 2026-10-07 定的口径：本地表和 API 不再分优先级、不自动回退 ——
     界面上点哪个按钮就用哪个的数据源。表里没有该地区时返回 None，
@@ -1007,7 +1007,7 @@ def fetch_local(province: str, region: str | None = None) -> dict | None:
 def fetch_wage_api(api_url: str | None, api_key: str | None,
                    year: int, month: int, province: str, region: str,
                    api_model: str | None = None) -> dict:
-    """【联网查询】只走 API，**不回退内置表**（与 :func:`fetch_local` 对称）。
+    """【联网查询】只走 API，不回退内置表（与 :func:`fetch_local` 对称）。
 
     失败时返回带 ``api_error`` 的 dict（min_wage/parttime_min 为 0），
     由界面直接提示失败原因 —— 不静默换成另一份数据。
@@ -1023,7 +1023,7 @@ def fetch_wage_api(api_url: str | None, api_key: str | None,
             "api_error": api_error or "未知原因"}
 
 
-# API 返回值的合理性区间：模型幻觉（例如 999999 或 0.5）**不能进账本** ——
+# API 返回值的合理性区间：模型幻觉（例如 999999 或 0.5）不能进账本 ——
 # 最低工资会联动加班费基数与公积金基数，写错会直接算错工资。
 MIN_WAGE_RANGE = (500.0, 20000.0)      # 月最低工资（元）
 PARTTIME_RANGE = (5.0, 200.0)          # 非全日制小时最低工资（元/时）
@@ -1085,7 +1085,7 @@ def _try_chat_api(api_url: str, api_key: str,
 
 
 def fetch_holidays_local(year: int) -> dict | None:
-    """【内置官方表】读 holidays.py 的某年安排，**纯本地、不联网**。
+    """【内置官方表】读 holidays.py 的某年安排，纯本地、不联网。
 
     未收录该年（通常因为国务院尚未公布，惯例是上年 11 月发布）返回 None。
     """
@@ -1094,7 +1094,7 @@ def fetch_holidays_local(year: int) -> dict | None:
 
 def fetch_holidays_api(api_url: str | None, api_key: str | None,
                        year: int, api_model: str | None = None) -> dict:
-    """【联网查询】只走 API，**不回退内置表**（与 :func:`fetch_holidays_local` 对称）。
+    """【联网查询】只走 API，不回退内置表（与 :func:`fetch_holidays_local` 对称）。
 
     失败时返回带 ``api_error`` 的 dict，日期均为空 —— 界面据此提示原因，
     不会把另一份数据偷偷换上。
@@ -1191,7 +1191,7 @@ def test_connection(api_url: str | None, api_key: str | None,
     供「API 设置」里的「测试连接」使用：能直接看出 Key 无效 / 模型名不对 /
     接口地址错 / 超时等问题。仅支持 https（当前版本不接本地 http 服务）。
 
-    ⚠ **不要设 max_tokens**：实测推理型模型（agnes-2.5-flash）会把 8 个 token 全花在
+    ⚠ 不要设 max_tokens：实测推理型模型（agnes-2.5-flash）会把 8 个 token 全花在
     ``reasoning_content`` 上、正文为空、``finish_reason=length`` → 误报「接口返回内容为空」。
 
     错误文案与运行时调用完全一致 —— 都来自 _post_chat / ChatError。

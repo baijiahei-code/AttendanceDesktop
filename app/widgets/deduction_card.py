@@ -13,7 +13,7 @@
 * :attr:`tax_auto`：自动个税勾选框（普通属性，不是 property）
 * :meth:`sync(r, book)`：根据 calc 结果刷新社保 / 公积金 / 扣除合计
 
-注：「个人扣除合计」QLabel 是内部私有属性（``_total``，**没有**公开的 total
+注：「个人扣除合计」QLabel 是内部私有属性（``_total``，没有公开的 total
 property），外部只调 ``sync()`` 刷新。
 """
 from __future__ import annotations

@@ -141,10 +141,10 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
         v.addSpacing(12)
 
         # —— 导航：按 ui.NAV_GROUPS 分组渲染（分组标题在 ui.py 里，别在这儿另写一份）——
-        # 「相关单位」是单位档案性质的独立入口、不随月份走 → 刻意排在「功 能」分组**之外**
+        # 「相关单位」是单位档案性质的独立入口、不随月份走 → 刻意排在「功 能」分组之外
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
-        # ⚠ nav_btns 必须是**页面索引顺序**（_show_page 用 enumerate 判断选中项），
+        # ⚠ nav_btns 必须是页面索引顺序（_show_page 用 enumerate 判断选中项），
         #   所以先建定长列表再按索引填，不能按显示顺序 append。
         self.nav_btns: list[QPushButton] = [None] * len(PAGES)
         for gi, (title, keys) in enumerate(NAV_GROUPS):
@@ -328,11 +328,11 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
                 self._fill_annual()
 
     def _sync_month_bar(self) -> None:
-        """月份操作条（上月 / 月份 / 锁定 / 下月 / 删除本月）的**存在性**。
+        """月份操作条（上月 / 月份 / 锁定 / 下月 / 删除本月）的存在性。
 
         不靠 `setVisible(False)` 藏起来 —— 对「与月份无关」的页面（见
-        :data:`ui.NO_MONTH_BAR_KEYS`，目前是「相关单位」）**直接把这条从主栏
-        布局里摘出去**，离开该页时再装回原位（页题栏与页面栈之间）。
+        :data:`ui.NO_MONTH_BAR_KEYS`，目前是「相关单位」）直接把这条从主栏
+        布局里摘出去，离开该页时再装回原位（页题栏与页面栈之间）。
         切页与切换月份各调一次，两条路径都对。
         """
         bar = getattr(self, "_month_bar", None)
@@ -635,7 +635,7 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
             else:
                 self.save_btn.setToolTip("")
         # —— 各页面锁定模式（每个 mixin 实现自己的 _set_xxx_locked，避免方法名冲突）——
-        # ⚠ 「相关单位」**不在其中**：它的数据是全局的（存在 settings，与月份无关），
+        # ⚠ 「相关单位」不在其中：它的数据是全局的（存在 settings，与月份无关），
         #    可改性只由它自己那把锁控制（见 pages_units）。
         for hook in ("_set_params_locked", "_set_calendar_locked", "_set_salary_locked"):
             fn = getattr(self, hook, None)
@@ -853,8 +853,8 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
         try:
             r = calc.compute(self._book)
             if self._is_locked:
-                # 只读模式：只刷新可见统计，**不写盘**。
-                # ⚠ 这里刻意**不清** _dirty：改动仍留在内存里，解锁后下一次
+                # 只读模式：只刷新可见统计，不写盘。
+                # ⚠ 这里刻意不清 _dirty：改动仍留在内存里，解锁后下一次
                 #   _changed()/_flush_changed() 会把它落盘；清了就等于静默丢弃用户刚做的修改。
                 self._last_result = r
                 self._data_version += 1
@@ -908,7 +908,7 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
     def _crypto_summary(self) -> str:
         """当前数据加密方式的简短描述（供「关于」对话框展示）。
 
-        只读 ``crypto.describe()`` 的配置摘要 —— **不含任何密钥材料**，可安全展示。
+        只读 ``crypto.describe()`` 的配置摘要 —— 不含任何密钥材料，可安全展示。
         异常在这里就地吞掉：拿不到诊断信息，不该让「关于」整体打不开。
         """
         try:
@@ -948,7 +948,7 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
     # 否则 150ms 后自动保存的「已保存 12:34:56」会把它顶掉，提示等于没显示。
     STATUS_HOLD_MS = 3000
     STATUS_HOLD_MS_ERR = 6000   # 失败提示更需要看清
-    # 「已复制到剪贴板」这类**要去别的窗口用**的提示：停留久一点，
+    # 「已复制到剪贴板」这类要去别的窗口用的提示：停留久一点，
     # 否则用户还在浏览器里、后台自动保存的「已保存」就把它顶掉了
     STATUS_HOLD_MS_CLIP = 60_000
 
@@ -1002,7 +1002,7 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
     # ---------- 工具 ----------
 
     def _render_page_error(self, layout, page_name: str, ex: Exception) -> None:
-        """页面渲染失败时的兜底：清空该页并放一行可读提示（**不要再抛异常**）。
+        """页面渲染失败时的兜底：清空该页并放一行可读提示（不要再抛异常）。
 
         重数据页（报表 / 年度汇总）的渲染都跑在信号槽里 —— 异常抛出去只会打印一段
         traceback 并留下半张没画完的页面，用户看到的是“页面莫名其妙缺块”。

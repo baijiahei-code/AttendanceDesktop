@@ -1,5 +1,5 @@
 /**
- * 应用外壳 + 工作台 + 考勤日历 + 参数页（状态管理 **V2** 范式）。
+ * 应用外壳 + 工作台 + 考勤日历 + 参数页（状态管理 V2 范式）。
  *
  * 为什么是 V2：官方文档明确「对于新开发的应用，建议直接使用 V2 版本范式」。
  * V2 用 @Local / @Param / @Event 明确组件的输入输出，@Param 按引用同步、不做深拷贝。
@@ -297,7 +297,7 @@ struct Index {
       this.corruptMonths.delete(key);
       this.saveState = `已读取 ${key}`;
     } else if (st.hasMonth(y, m)) {
-      // 存档解析失败：当成新月份显示，但**禁止写回**，避免覆盖原数据
+      // 存档解析失败：当成新月份显示，但禁止写回，避免覆盖原数据
       this.book = createBook(y, m, '', true);
       this.corruptMonths.add(key);
       this.saveState = `⚠ ${key} 读取失败（${st.lastError || '格式异常'}），已保护原数据不被覆盖`;
@@ -322,7 +322,7 @@ struct Index {
   }
 
   /**
-   * 唯一重算入口（persist=true 时**调度**落盘）。
+   * 唯一重算入口（persist=true 时调度落盘）。
    *
    * ⚠ 不能在这里直接写盘：Preferences 的落盘是异步的，连续输入会并发多个 saveMonth，
    * 完成顺序不定 → 后完成的「旧快照」可能覆盖「新快照」（数据丢失）。
@@ -556,9 +556,9 @@ struct Index {
   /**
    * 按官方安排铺设（与桌面版 `_apply_holidays` 完全同口径）。
    *
-   * - **状态**：只覆盖「法定 / 放假调休 / 补班」三类日期 + 普通周末；
-   *   范围之外的日期（普通工作日）**不动**，保留用户手填的请假 / 缺勤等。
-   * - **「法定节假日」标记**：整月重写 —— 只有法定日为 1，其余一律清 0
+   * - 状态：只覆盖「法定 / 放假调休 / 补班」三类日期 + 普通周末；
+   *   范围之外的日期（普通工作日）不动，保留用户手填的请假 / 缺勤等。
+   * - 「法定节假日」标记：整月重写 —— 只有法定日为 1，其余一律清 0
    *   （否则被错误数据标过的 mark 永远洗不掉，×3 加班工资会一直算错）。
    *
    * @param sets 三组 MM-DD 集合
@@ -935,7 +935,7 @@ struct Index {
   }
 
   private openTplDialog(mode: string): void {
-    // 没有模板时**不弹对话框**，直接提示（桌面版 _rename_template / _delete_template 同口径）
+    // 没有模板时不弹对话框，直接提示（桌面版 _rename_template / _delete_template 同口径）
     if (mode !== 'save' && this.tplSel.length === 0) {
       this.tplHint = mode === 'delete' ? '还没有可删除的模板' : '还没有可重命名的模板';
       return;
@@ -1190,7 +1190,7 @@ struct Index {
 
   /**
    * 选省份（桌面版 `_on_province_changed` 同口径）：
-   * 记下省份 → **自动带出第一个地区** → 写入全局设置（工作地与月份无关）→ 按内置表填最低工资。
+   * 记下省份 → 自动带出第一个地区 → 写入全局设置（工作地与月份无关）→ 按内置表填最低工资。
    */
   private pickProvince(p: string): void {
     if (this.isLocked) {
@@ -1260,7 +1260,7 @@ struct Index {
   }
 
   /**
-   * 启动时读回上次选的工作地（只回填显示，**不改任何账本数据**）。
+   * 启动时读回上次选的工作地（只回填显示，不改任何账本数据）。
    *
    * ⚠ 这里刻意不重放 `applyRegionLocal`：否则每次打开软件都会把账本里的
    *   最低工资冲成内置表的值（用户手改过的标准就丢了）。选工作地时才会填。

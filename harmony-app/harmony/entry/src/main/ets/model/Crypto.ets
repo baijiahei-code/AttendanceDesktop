@@ -1,7 +1,7 @@
 ﻿/**
  * 存档加密（HUKS：鸿蒙系统密钥库）。
  *
- * 为什么用 HUKS：密钥生成在系统密钥库内、**不可导出**，应用数据被拷走也解不开。
+ * 为什么用 HUKS：密钥生成在系统密钥库内、不可导出，应用数据被拷走也解不开。
  * 代价：HUKS 只有异步接口（Promise），所以存储层也是异步的。
  *
  * 算法：AES-256-GCM / NoPadding（HUKS 内置），AAD 固定 "ATT1"。
@@ -9,12 +9,12 @@
  *
  * 官方规格（AES/GCM/NoPadding）：
  *  - 加密：NONCE / AAD 可选；不指定 NONCE 时 HUKS 返回「密文 + AEAD + NONCE」。
- *  - 解密：**NONCE、AEAD 必选**，AAD 可选。
+ *  - 解密：NONCE、AEAD 必选，AAD 可选。
  * 因此解密必须把 AEAD 用 `HUKS_TAG_AE_TAG` 单独传入，不能和密文一起放在 inData 里
  * （否则 initSession 报 401「The parameter does not exist」）。
  *
  * 兜底：HUKS 不可用（个别环境/模拟器）时返回 `h0:` 前缀的明文，并把
- * **失败阶段 + 错误码** 记在 lastError 里 —— 界面必须显示原因，绝不静默降级。
+ * 失败阶段 + 错误码 记在 lastError 里 —— 界面必须显示原因，绝不静默降级。
  */
 
 import { huks } from '@kit.UniversalKeystoreKit';
@@ -124,7 +124,7 @@ function sessionProps(purpose: number, nonce: Uint8Array): huks.HuksParam[] {
  *
  * 官方规格（AES/GCM/NoPadding）：
  *  - 加密：NONCE、AAD 可选；不指定 NONCE 时返回「密文 + AEAD + NONCE」（AEAD 16、NONCE 12）。
- *  - 解密：**NONCE、AEAD 必选**，AAD 可选。
+ *  - 解密：NONCE、AEAD 必选，AAD 可选。
  * 所以解密必须把密文尾部的 AEAD 用 HUKS_TAG_AE_TAG 单独传入，密文本体不含 tag；
  * 把 tag 一起塞进 inData 会让 initSession 直接报 401「parameter does not exist」。
  */

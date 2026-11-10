@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 """打包 RPM 安装包 —— 面向 rpm 系 Linux（openEuler 等）。
 
-⚠ 本包**不一定能装到麒麟 / UOS 上**：产物要求 glibc ≥ 构建机版本，而麒麟 V10（2.23）、
+⚠ 本包不一定能装到麒麟 / UOS 上：产物要求 glibc ≥ 构建机版本，而麒麟 V10（2.23）、
 V10 SP1（2.31）、UOS 20（≈2.28）都低于当前构建基线（Deepin 25 = 2.38）。
 判定与解法见 README「glibc 基线」与 ARCHITECTURE「Linux 兼容性基线（glibc）」。
 
 与 pack_deb.py 的关系
 ---------------------
-两者**共用同一套 PyInstaller 产物与运行时裁剪逻辑**（本脚本直接 ``import pack_deb``
-里的函数与常量，不复制代码、也不修改它），差别只在最后一步的**包格式组装**：
+两者共用同一套 PyInstaller 产物与运行时裁剪逻辑（本脚本直接 ``import pack_deb``
+里的函数与常量，不复制代码、也不修改它），差别只在最后一步的包格式组装：
 
     deb : DEBIAN/ 目录树          + dpkg-deb
     rpm : .spec 文件 + buildroot  + rpmbuild -bb
@@ -17,8 +17,8 @@ V10 SP1（2.31）、UOS 20（≈2.28）都低于当前构建基线（Deepin 25 =
 为什么 ``AutoReqProv: no``
 --------------------------
 PyInstaller 的产物里含几十个自带 ``.so``，rpm 的自动依赖探测会把它们全算成系统依赖，
-生成一长串**本机才有**的 ``libX.so.1()(64bit)`` 之类的 Requires —— 装到目标机上必然
-「依赖不满足」。所以关掉自动探测，改为显式声明那几个**缺了必然起不来**的系统库。
+生成一长串本机才有的 ``libX.so.1()(64bit)`` 之类的 Requires —— 装到目标机上必然
+「依赖不满足」。所以关掉自动探测，改为显式声明那几个缺了必然起不来的系统库。
 
 依赖（构建机）
 --------------
@@ -27,7 +27,7 @@ Debian 系需要 rpm 工具链：``sudo apt install -y rpm``（提供 ``rpmbuild
 
 glibc 基线
 ----------
-与 deb **完全一致**：由构建机的 glibc 决定，裁剪最多降到 2.36；
+与 deb 完全一致：由构建机的 glibc 决定，裁剪最多降到 2.36；
 同样覆盖不了麒麟 V10(2.23) / V10 SP1(2.31) / UOS 20(≈2.28)。
 详见 ``pack_deb.py`` 的模块 docstring 与 ``ARCHITECTURE.md`` 的兼容性小节。
 
@@ -76,8 +76,8 @@ BUILD_DIR = ROOT / "build_rpm"
 RPM_RELEASE = "1"
 
 # Debian 包名 → RPM 包名
-# ⚠ 必须是目标体系的**真实包名**，已逐个核对 openEuler 24.03-LTS 仓库索引：
-#   · libxcb-cursor0 → xcb-util-cursor（且**只**在 EPOL 仓库，不在 OS 仓库）
+# ⚠ 必须是目标体系的真实包名，已逐个核对 openEuler 24.03-LTS 仓库索引：
+#   · libxcb-cursor0 → xcb-util-cursor（且只在 EPOL 仓库，不在 OS 仓库）
 #   · fonts-noto-cjk → google-noto-sans-cjk-ttc-fonts（不叫 ...-sans-cjk-fonts）
 #   · libxcb-xinerama0 / libxcb-shape0 在 openEuler 均已并入 libxcb，无独立包
 DEB_TO_RPM = {
@@ -104,7 +104,7 @@ def _split_list(text: str) -> tuple[str, ...]:
 
 
 # 只能写成软依赖的包：xcb-util-cursor 是 Qt6 xcb 插件的硬需求，但它在 openEuler
-# 仅存在于 EPOL 仓库；未启用 EPOL 时根本取不到，若写成 Requires 会让**整包装不上**。
+# 仅存在于 EPOL 仓库；未启用 EPOL 时根本取不到，若写成 Requires 会让整包装不上。
 # 写成 Recommends：dnf install 能取到就自动装；取不到则由 README 指引手动补装。
 _SOFT_ONLY = ("libxcb-cursor0",)
 # libc6 由 rpm_requires() 单独带版本下限，故从库清单里排除
@@ -281,7 +281,7 @@ def build_spec(version: str, arch: str, pkgroot: Path) -> Path:
         requires=", ".join(rpm_requires()),
         recommends=", ".join(rpm_recommends()),
         lib_dir=LIB_DIR,
-        # ⚠ %files 里的行**必须真实存在**，否则 rpmbuild 直接报
+        # ⚠ %files 里的行必须真实存在，否则 rpmbuild 直接报
         #   "File not found" 打包失败（deb 侧只是警告一下）。图标拷不进去时这里留空。
         icon_line=(f"/usr/share/icons/hicolor/256x256/apps/{PKG}.png"
                    if (ROOT / "app" / "icon.png").exists() else ""),

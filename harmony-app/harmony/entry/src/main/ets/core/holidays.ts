@@ -137,7 +137,7 @@ export function hasYear(year: number): boolean {
 /**
  * 把某个 "MM-DD" 归类为 statutory / rest / makeup；普通日返回 null。
  *
- * ⚠ 优先级全项目只有这一处：**法定 → 补班 → 放假**。
+ * ⚠ 优先级全项目只有这一处：法定 → 补班 → 放假。
  *   联网数据真会出现「同一天既在放假区间又在补班日」，两条链路必须给出同一答案。
  */
 export function classifyDay(key: string, sets: HolidaySets): string | null {

@@ -6,7 +6,7 @@
 ``dpapi:<b64>``         Windows DPAPI，密钥绑定当前 Windows 用户账户
 ``gm1:<b64>.<b64>.<b64>.<b64>``
                         国密混合加密（信创 / 非 Windows 平台默认）
-其他（无前缀）           更早版本的明文 —— **原样返回**，永不转换（向后兼容）
+其他（无前缀）           更早版本的明文 —— 原样返回，永不转换（向后兼容）
 ======================  ====================================================
 
 ``gm1`` 密文构造（Encrypt-then-MAC）::
@@ -26,7 +26,7 @@ SM4-CBC 自身也没有完整性保护 —— 于是机密性交给 SM4-CBC、�
 
 密钥落盘
 --------
-``<数据目录>/keys/sm2_private.hex``，POSIX 权限 0600。**无私钥口令保护**：
+``<数据目录>/keys/sm2_private.hex``，POSIX 权限 0600。无私钥口令保护：
 此处威胁模型是“同机其他用户 / 误读文件”，不抵御拿到磁盘镜像的攻击者 ——
 对外描述请用这个口径，不要夸大。
 
@@ -81,14 +81,14 @@ def describe(key_dir: str | None = None) -> dict:
     :return: 含下列键的 dict ——
         ``backend``         当前后端：``dpapi`` / ``gm`` / ``plain``
         ``dpapi_available`` 本平台是否支持 DPAPI
-        ``key_path``        SM2 私钥文件路径（**只有 gm 后端会用到**）
+        ``key_path``        SM2 私钥文件路径（只有 gm 后端会用到）
         ``key_ready``       私钥是否已就绪（缓存或文件已存在；非 gm 后端恒为 True）
         ``algorithms``      实际生效的算法描述（按后端给出，不夸大）
     """
     path = key_path(key_dir)
     mode = backend()
     if mode == "dpapi":
-        # Windows 走系统 DPAPI，**没有密钥文件、也不涉及国密** —— 不能报成 SM2/SM4
+        # Windows 走系统 DPAPI，没有密钥文件、也不涉及国密 —— 不能报成 SM2/SM4
         algos = "Windows DPAPI（由当前用户账户托管密钥，无密钥文件）"
     elif mode == "gm":
         algos = "SM2(C1C3C2) + SM4-CBC + HMAC-SM3"
@@ -109,7 +109,7 @@ def _dpapi_call(raw: bytes, decrypt: bool) -> bytes | None:
     """调用 CryptProtectData / CryptUnprotectData；失败返回 None。
 
     延迟 import ``ctypes.wintypes``：它只在 Windows 存在，放在模块顶层会让
-    非 Windows 平台**导入本模块就崩溃**（这正是改造前的原始问题）。
+    非 Windows 平台导入本模块就崩溃（这正是改造前的原始问题）。
     """
     if not dpapi_available():
         return None
@@ -271,7 +271,7 @@ def _gm_unprotect(token: str, key_dir: str | None = None) -> str:
     """解密 ``gm1:`` 令牌。
 
     任意环节失败（字段数不对、base64 非法、SM2 解不开、HMAC 不匹配、UTF-8 解码失败）
-    都**抛异常**，由 :func:`unprotect` 统一兜底成「原样返回 token」。
+    都抛异常，由 :func:`unprotect` 统一兜底成「原样返回 token」。
     """
     priv, _pub = _load_keypair(key_dir)
     parts = token[len(TOKEN_GM):].split(".")
@@ -292,7 +292,7 @@ def protect(data: str, key_dir: str | None = None) -> str:
     ``key_dir`` 指定 SM2 密钥目录（调用方通常传自己数据目录下的 ``keys``）；
     省略则用 :func:`configure` 设定的默认目录。
 
-    失败时**返回原文**（与改造前 DPAPI 的行为一致）：宁可明文落盘也不要丢用户
+    失败时返回原文（与改造前 DPAPI 的行为一致）：宁可明文落盘也不要丢用户
     配置 —— 加密失败会打印 traceback 以便排查。
     """
     if not data:
@@ -314,7 +314,7 @@ def unprotect(token: str, key_dir: str | None = None) -> str:
     """解密单个敏感字段（``key_dir`` 语义同 :func:`protect`）。
 
     任何失败（密钥缺失、跨平台拿到 dpapi:、密文被篡改、字段根本不是密文）都
-    **原样返回 token**，绝不抛异常 —— 调用方无需 try，UI 不会因坏数据崩溃。
+    原样返回 token，绝不抛异常 —— 调用方无需 try，UI 不会因坏数据崩溃。
     """
     if not token:
         return token

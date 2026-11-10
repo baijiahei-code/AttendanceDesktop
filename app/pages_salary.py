@@ -58,7 +58,7 @@ class SalaryPageMixin:
         self.pay_items = PayItemListWidget()
         self.pay_items.changed.connect(self._pi_touched)
         self.pay_items.copy_requested.connect(self._on_copy_pay_items)
-        # 信号带的是**新行下标**：工资项按类型分组插入，新行常常不是最后一行，
+        # 信号带的是新行下标：工资项按类型分组插入，新行常常不是最后一行，
         # 丢掉下标去滚 rows[-1] 会滚到无关的行（看不到刚加的输入框）。
         self.pay_items.insert_requested_at.connect(self._focus_new_row)
         self.pay_items.set_add_callback(self._add_pay_item_at_back_of_type)
@@ -172,7 +172,7 @@ class SalaryPageMixin:
         return row
 
     def _focus_new_row(self, index: int):
-        """新行已插入 + 已聚焦 → 滚到**那一行**可见。
+        """新行已插入 + 已聚焦 → 滚到那一行可见。
 
         ``index`` 来自 :attr:`PayItemListWidget.insert_requested_at`（插入位置），
         不是“最后一行” —— 按类型分组插入时两者经常不同。

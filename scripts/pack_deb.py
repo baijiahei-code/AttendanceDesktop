@@ -14,16 +14,16 @@
 
 设计要点：
 
-* **只在 Linux 执行**：Windows 侧发布请用 ``pack_windows.py`` / ``一键打包.bat``。
+* 只在 Linux 执行：Windows 侧发布请用 ``pack_windows.py`` / ``一键打包.bat``。
 * 版本号单一来源：从 ``installer.iss`` 的 ``AppVersion`` 读取，避免两处版本漂移。
 * 架构由 ``dpkg --print-architecture`` 自动探测（amd64 / arm64 / loong64 均适用）。
-* 用 ``dpkg-deb --build --root-owner-group`` 定属主为 root，**不需要 fakeroot**。
-* **glibc 基线由构建机决定**：PyInstaller 会把构建机的 ``libpython`` / ``libstdc++`` /
-  GTK-GLib 等动态库一并收进包内，这些库的**符号版本**就是产物的安装下限。实测在
-  Deepin 25（glibc 2.38）上构建的包要求 ``GLIBC_2.38``，**装不进**麒麟 V10(2.23) /
+* 用 ``dpkg-deb --build --root-owner-group`` 定属主为 root，不需要 fakeroot。
+* glibc 基线由构建机决定：PyInstaller 会把构建机的 ``libpython`` / ``libstdc++`` /
+  GTK-GLib 等动态库一并收进包内，这些库的符号版本就是产物的安装下限。实测在
+  Deepin 25（glibc 2.38）上构建的包要求 ``GLIBC_2.38``，装不进麒麟 V10(2.23) /
   V10 SP1(2.31) / UOS 20(≈2.28)；可用的是 openEuler 24.03+ / Deepin 23+。
-  要覆盖旧基线必须**同时**做两件事：① 在低 glibc 容器内构建（``python:3.11-slim-bullseye``
-  = 2.31、``python:3.11-slim-buster`` = 2.28）；② **把 PySide6 降到 ≤ 6.7** ——
+  要覆盖旧基线必须同时做两件事：① 在低 glibc 容器内构建（``python:3.11-slim-bullseye``
+  = 2.31、``python:3.11-slim-buster`` = 2.28）；② 把 PySide6 降到 ≤ 6.7 ——
   PySide6 6.11 的 wheel 标签是 ``manylinux_2_34``，在 2.31/2.28 的容器里根本装不上。
   麒麟 V10 的 2.23 低于 Qt6 全家（≥2.28）的下限，需换 Qt5 技术栈才可能支持。
 """
@@ -197,7 +197,7 @@ def trim_bundle(lib: Path) -> int:
     """裁剪运行时中确定无用的部分，返回释放的字节数。
 
     只动“个人桌面场景下绝对用不到”的东西：多余的 Qt 语言包与嵌入式平台插件。
-    有意**不**动 GTK 主题插件（连带 libgtk-3 约 15 MB）—— 删了界面会退化成
+    有意不动 GTK 主题插件（连带 libgtk-3 约 15 MB）—— 删了界面会退化成
     Fusion 自绘样式，不值得为体积牺牲观感。
     """
     qt = lib / "_internal" / "PySide6" / "Qt"
@@ -215,7 +215,7 @@ def normalize_perms(root: Path) -> None:
     """规范权限：目录 755、可执行文件 755、其余文件 644。
 
     构建机 umask 常为 002，``shutil.copytree`` 会把源目录的 775/664 一并带出，
-    结果是**组可写** —— 既违反 Debian 惯例（lintian 报 ``non-standard-dir-perm``
+    结果是组可写 —— 既违反 Debian 惯例（lintian 报 ``non-standard-dir-perm``
     / ``non-standard-file-perm``），安全审计也把组可写目录当风险点。
     """
     for p in [root, *root.rglob("*")]:
@@ -296,7 +296,7 @@ def assemble(deb_root: Path, version: str, arch: str) -> None:
 def sm3_of(path: Path) -> tuple[str, str] | None:
     """算 SM3 摘要（GB/T 32905），返回 ``(hex, 实现名)``；失败返回 None。
 
-    **优先用系统 OpenSSL 的 C 实现**：实测 76MB 的 deb 用纯 Python gmssl 要跑
+    优先用系统 OpenSSL 的 C 实现：实测 76MB 的 deb 用纯 Python gmssl 要跑
     4 分半（89% CPU 空转）完全不可用；OpenSSL 3.x 原生支持 SM3，且
     ``echo -n abc | openssl dgst -sm3`` 与 GB/T 32905 标准向量逐位一致。
     """
@@ -331,8 +331,8 @@ def build_machine_glibc_version() -> str:
     """只取版本号（如 "2.38"）；探测失败返回空串。
 
     PyInstaller 会把构建机的 ``libpython`` / ``libstdc++`` 等一并打进产物，所以产物的
-    glibc 需求**就等于构建机版本**。把它写进包的依赖声明后，基线更低的系统会在
-    **安装时**直接报依赖不满足，而不是装完运行才崩。
+    glibc 需求就等于构建机版本。把它写进包的依赖声明后，基线更低的系统会在
+    安装时直接报依赖不满足，而不是装完运行才崩。
     """
     m = re.search(r"(\d+\.\d+(?:\.\d+)?)", build_machine_glibc())
     return m.group(1) if m else ""

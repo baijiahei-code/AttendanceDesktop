@@ -62,10 +62,10 @@ _NOARG = object()
 class AsyncCall(QObject):
     """一次后台调用的句柄：持有信号对象，直到任务结束。
 
-    自身是 ``QObject``（在主线程创建）→ 信号用队列连接投递，**回调必然在主线程执行**，
-    可以安全更新界面。``cancel()`` 会放弃**结果类**回调（``on_done`` / ``on_failed``）——
+    自身是 ``QObject``（在主线程创建）→ 信号用队列连接投递，回调必然在主线程执行，
+    可以安全更新界面。``cancel()`` 会放弃结果类回调（``on_done`` / ``on_failed``）——
     因此窗口关闭 / 页面销毁后回来的结果不会再触碰界面；但 ``on_finished``
-    **仍会执行**（各页面靠它把「查询中…」按钮恢复可用）。
+    仍会执行（各页面靠它把「查询中…」按钮恢复可用）。
     """
 
     def __init__(self, fn: Callable[[], object],
@@ -88,7 +88,7 @@ class AsyncCall(QObject):
         return self
 
     def cancel(self):
-        """放弃这次调用的**结果类**回调（on_done / on_failed）；请求本身无法中断，仅忽略结果。
+        """放弃这次调用的结果类回调（on_done / on_failed）；请求本身无法中断，仅忽略结果。
 
         ``on_finished`` 不受影响 —— 它负责恢复按钮可用状态，必须照常执行。
         """
@@ -105,7 +105,7 @@ class AsyncCall(QObject):
             pass  # 目标控件已销毁（对话框被关闭 / 窗口正在退出）
 
     def _dispatch_done(self, result):
-        # ⚠ `_finish()` 必须**无论如何**都执行：它负责把本对象从 _ACTIVE 里摘掉
+        # ⚠ `_finish()` 必须无论如何都执行：它负责把本对象从 _ACTIVE 里摘掉
         # 并调 on_finished（各页面靠它把「查询中…」按钮恢复可用）。
         # 被 cancel() 或 on_done 自身抛异常时都漏掉的话，按钮会永远停在禁用态。
         try:

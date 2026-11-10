@@ -13,7 +13,7 @@
 * :attr:`lock_btn`：加班费基数锁按钮（外部监听点击）
 * :meth:`sync(r, book)`：根据 calc 结果刷新三档金额与加班工资合计
 
-注：三档各自的「金额」标签存在**私有**属性 ``_ot_vals`` 里（不对外）；
+注：三档各自的「金额」标签存在私有属性 ``_ot_vals`` 里（不对外）；
 外部要刷新一律调 ``sync()``。
 """
 from __future__ import annotations
@@ -147,7 +147,7 @@ class OvertimeCardWidget(QFrame):
     def sync(self, r, b: model.MonthBook | None = None):
         """根据结果刷新三档金额与加班工资合计。
 
-        合计 = **固定加班工资 + 三档加班工资**（与报表「工资核算（应发）」的「加班工资
+        合计 = 固定加班工资 + 三档加班工资（与报表「工资核算（应发）」的「加班工资
         合计」同口径）。注意 ``r.overtime_wage_total`` 只含三档（calc 里它是应发工资
         的构成项之一，固定加班工资由 calc 单独累加，不能并进去，否则重复计），
         所以固定部分在这里由 book 补上。

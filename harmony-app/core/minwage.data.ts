@@ -2,7 +2,7 @@
  * 最低工资标准表（月最低工资 / 非全日制小时最低工资）。
  *
  * ⚠ 本文件由 scripts/export_minwage.py 从桌面版 app/wages.py 自动生成，
- *   **不要手改**：改数据请改桌面版再重跑脚本，否则两边会不一致。
+ *   不要手改：改数据请改桌面版再重跑脚本，否则两边会不一致。
  */
 
 export class MinWageRow {
@@ -480,7 +480,7 @@ export function minWageRegions(province: string): string[] {
   return BY_PROVINCE.get(province) ?? [];
 }
 
-/** 查某省某地区的标准；查不到返回 null（**不静默替换成别的城市**）。 */
+/** 查某省某地区的标准；查不到返回 null（不静默替换成别的城市）。 */
 export function minWageOf(province: string, region: string): MinWageRow | null {
   return BY_REGION.get(`${province}/${region}`) ?? null;
 }

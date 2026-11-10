@@ -1,22 +1,22 @@
 """国密算法（SM2 / SM3 / SM4）薄封装 —— 供敏感字段加密使用。
 
-依赖 ``gmssl``：算法本体是**纯 Python**（自己实现 SM3/SM4，不调目标机的 libssl），
-但它依赖 ``pycryptodomex``（**C 扩展** —— ``gmssl/sm2.py`` 顶层就 import
+依赖 ``gmssl``：算法本体是纯 Python（自己实现 SM3/SM4，不调目标机的 libssl），
+但它依赖 ``pycryptodomex``（C 扩展 —— ``gmssl/sm2.py`` 顶层就 import
 ``Cryptodome.Util.asn1``）。因此打包到信创环境时：
 
 * x86_64 / aarch64：PyPI 有 manylinux wheel，开箱即用；
-* **loongarch64：pycryptodomex 需自行编译**（适配要点，别按“零依赖”做规划）。
+* loongarch64：pycryptodomex 需自行编译（适配要点，别按“零依赖”做规划）。
 
 下列事实均已在本机实测核实（改动前请先复测，勿凭印象）：
 
-* ``gmssl.func.random_hex`` 用 ``random.choice``（**非密码学安全**），而
+* ``gmssl.func.random_hex`` 用 ``random.choice``（非密码学安全），而
   ``CryptSM2.encrypt()`` 内部正是用它取随机数 k（k 可预测 → 密文可被恢复）。
   本模块在导入时把 ``random_hex`` 换成 ``os.urandom`` 版本，见 :func:`_harden_random`。
-* ``CryptSM2.decrypt()`` 算出完整性哈希 u 却**不与 C3 比较** —— 库自身不校验密文
+* ``CryptSM2.decrypt()`` 算出完整性哈希 u 却不与 C3 比较 —— 库自身不校验密文
   完整性，故完整性一律由外层 HMAC-SM3 承担（Encrypt-then-MAC）。
-* ``CryptSM2.__init__`` 的位置参数顺序是 **(private_key, public_key, ...)**，
+* ``CryptSM2.__init__`` 的位置参数顺序是 (private_key, public_key, ...)，
   与直觉相反 → 本模块一律用关键字参数调用。
-* ``CryptSM2.encrypt()`` 的 ``mode``：0 → C1C2C3，1 → C1C3C2。本模块固定 **mode=1**，
+* ``CryptSM2.encrypt()`` 的 ``mode``：0 → C1C2C3，1 → C1C3C2。本模块固定 mode=1，
   即 GM/T 0009 推荐的 C1C3C2 顺序；C1 不带 04 前缀。
 * ``CryptSM4(mode, padding_mode=PKCS7)``，``crypt_cbc(iv, data)`` 自动 PKCS#7 填充。
 * SM3 标准向量、SM4 标准向量（GB/T 32907 A.1）、SM2 加解密/签名往返均实测通过。
@@ -189,7 +189,7 @@ def sm2_encrypt(pub_hex: str, data: bytes) -> bytes:
 
 
 def sm2_decrypt(priv_hex: str, data: bytes) -> bytes:
-    """SM2 私钥解密。密文被篡改时**不会**报错（库不校验 C3）——
+    """SM2 私钥解密。密文被篡改时不会报错（库不校验 C3）——
     完整性必须由外层的 HMAC-SM3 保证，勿单独依赖本函数。
     """
     cipher = _sm2.CryptSM2(private_key=priv_hex, public_key="", mode=_SM2_CIPHER_MODE)

@@ -9,7 +9,7 @@
     - ``"quick"``   → ``QFrame#quickCard``（快捷入口）
     - ``"row"``     → ``QFrame#pirow``   （工资项单行）
 * 统一的「标题 + 可选 hint + 可选右侧工具槽 + 内容区」结构。
-* **统一参与锁定状态机** —— :meth:`Card.set_locked` 一键禁用卡片内所有可交互控件，
+* 统一参与锁定状态机 —— :meth:`Card.set_locked` 一键禁用卡片内所有可交互控件，
   各页面 ``_set_xxx_locked`` 不再重复写 ``for w in widgets: w.setEnabled(False)``。
 * 自动追踪卡片内通过 :meth:`add_widget` / :meth:`add_layout` 加入的可交互控件，
   用于锁定时批量禁用；同时不破坏 Qt 的父子对象管理。
@@ -154,7 +154,7 @@ class Card(QFrame):
     def body_layout(self) -> QVBoxLayout:
         """返回内容区 layout，需要做 GridLayout / HBoxLayout 时请用 add_layout。
 
-        ⚠ 拿到 layout 后自己 ``addWidget`` 的控件**不会被追踪**（不会参与
+        ⚠ 拿到 layout 后自己 ``addWidget`` 的控件不会被追踪（不会参与
         :meth:`set_locked` 批量禁用）—— 确实需要参与锁定就补一句
         :meth:`track_extra` 把那个控件或子 layout 登记进来。
         """
@@ -169,7 +169,7 @@ class Card(QFrame):
     def add_layout(self, lay) -> None:
         """往卡片内容区加一个 layout（QGridLayout / QHBoxLayout 等）。
 
-        layout 里嵌套的控件**会**被锁定（``_apply_lock_to`` 对 layout 递归
+        layout 里嵌套的控件会被锁定（``_apply_lock_to`` 对 layout 递归
         ``itemAt``），所以调用方不需要再自己遍历 disable。
         """
         self._body.addLayout(lay)
@@ -186,7 +186,7 @@ class Card(QFrame):
         return w
 
     def add_widget_untracked(self, w: QWidget) -> QWidget:
-        """把 widget 加到 body 但**不**参与 set_locked 批量禁用。
+        """把 widget 加到 body 但不参与 set_locked 批量禁用。
 
         用于：导出 Excel、复制链接、查看日志 等「锁定时仍应可用」的操作按钮。
         """

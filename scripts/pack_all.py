@@ -4,9 +4,9 @@
 
 为什么不能「一条命令同时出 Windows 与 Linux 版」
 ------------------------------------------------
-PyInstaller **不能交叉编译**（Windows 上打不出 Linux 可执行文件），deb / rpm 也各自
+PyInstaller 不能交叉编译（Windows 上打不出 Linux 可执行文件），deb / rpm 也各自
 依赖本机的 ``dpkg-deb`` / ``rpmbuild``。所以「一台机器一次跑出两平台」在技术上不成立。
-本脚本解决的是**入口不统一**：两个平台都只记这一个命令，由它按平台分派。
+本脚本解决的是入口不统一：两个平台都只记这一个命令，由它按平台分派。
 
 同一平台内则可以一次出齐：Linux 上用 ``all`` 依次构建 deb + rpm。
 
@@ -81,7 +81,7 @@ ALL_TARGETS = ("deb", "rpm")
 def parse_args(argv: list[str]) -> tuple[str | None, list[str], bool]:
     """手写解析：位置参数（可选）win/deb，其余原样透传给底层脚本。
 
-    不用 argparse 是因为 ``--keep`` 这类参数需要**原样**透传，而 argparse 会把
+    不用 argparse 是因为 ``--keep`` 这类参数需要原样透传，而 argparse 会把
     以 ``-`` 开头的未知参数当错误抛出来。
     """
     target: str | None = None
