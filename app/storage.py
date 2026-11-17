@@ -352,3 +352,28 @@ class MonthStore:
         settings = self.load_settings()
         settings[self.UNITS_LOCKED_KEY] = bool(locked)
         return self.save_settings(settings)
+
+    # ========== 两个「跟随月最低工资」的字段级锁 ==========
+    #
+    # 加班费计算基数 / 公积金缴费基数 各有一把锁。锁态必须落盘，否则每次重建
+    # 参数页（打开软件、切月回来）都回到「锁定」，锁定态又会把用户手填的基数
+    # 按最低工资覆盖掉。
+
+    OT_BASE_LOCKED_KEY = "ot_base_locked"
+    FUND_BASE_LOCKED_KEY = "fund_base_locked"
+
+    def load_base_locks(self) -> tuple[bool, bool]:
+        """读取（加班费计算基数锁, 公积金缴费基数锁）。
+
+        没有这两个键（老版本设置 / 全新安装）→ 都按「锁定」处理（与旧行为一致）。
+        """
+        s = self.load_settings()
+        return (bool(s.get(self.OT_BASE_LOCKED_KEY, True)),
+                bool(s.get(self.FUND_BASE_LOCKED_KEY, True)))
+
+    def save_base_locks(self, *, ot_base_locked: bool, fund_base_locked: bool) -> bool:
+        """把两个字段级锁写进 settings.json（其它设置原样保留）。"""
+        s = self.load_settings()
+        s[self.OT_BASE_LOCKED_KEY] = bool(ot_base_locked)
+        s[self.FUND_BASE_LOCKED_KEY] = bool(fund_base_locked)
+        return self.save_settings(s)

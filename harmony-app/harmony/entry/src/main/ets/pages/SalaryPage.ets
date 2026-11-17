@@ -28,7 +28,7 @@ export struct SalaryPage {
   };
   @Event onAddNamed: (name: string, type: string) => void = (name: string, type: string) => {
   };
-  @Event onAddCustom: () => void = () => {
+  @Event onAddCustomOf: (type: string) => void = (type: string) => {
   };
   @Event onRename: (index: number, v: string) => void = (index: number, v: string) => {
   };
@@ -101,20 +101,34 @@ export struct SalaryPage {
     return out;
   }
 
-  /** 「添加工资项」菜单：按类型分组，已添加的标 ✓，底部可自定义。 */
+  /** 「添加工资项」二级菜单的子菜单：表头（N 项）+ 项列表（已添加置灰打 ✓）+ 自定义。 */
+  @Builder
+  paySubMenu(g: PayCatalogGroup) {
+    Menu() {
+      MenuItem({ content: `${g.title}（${g.items.length} 项）` })
+        .enabled(false)
+      ForEach(g.items, (n: string) => {
+        MenuItem({ content: this.payItemMenuText(n) })
+          .enabled(!this.hasPayItem(n))
+          .onClick(() => this.onAddNamed(n, g.type))
+      }, (n: string) => `${g.type}-${n}-${this.hasPayItem(n)}`)
+      MenuItem({ content: '＋ 输入自定义名称…' })
+        .onClick(() => this.onAddCustomOf(g.type))
+    }
+  }
+
+  /** 「添加工资项」一级菜单（与桌面版一致：4 个类型入口 + 「可选 N 项」，点开才展开具体项）。 */
   @Builder
   addPayMenu() {
     Menu() {
       ForEach(PAYITEM_GROUPS, (g: PayCatalogGroup) => {
-        MenuItemGroup({ header: `${g.title} · 可选 ${this.catalogLeft(g.type)} 项` }) {
-          ForEach(g.items, (n: string) => {
-            MenuItem({ content: this.payItemMenuText(n) })
-              .onClick(() => this.onAddNamed(n, g.type))
-          }, (n: string) => `${g.type}-${n}-${this.hasPayItem(n)}`)
-        }
+        MenuItem({
+          content: this.catalogLeft(g.type) === 0
+            ? `${g.title}    已全部添加`
+            : `${g.title}    可选 ${this.catalogLeft(g.type)} 项  ▸`,
+          builder: (): void => this.paySubMenu(g)
+        })
       }, (g: PayCatalogGroup) => `${g.type}-${this.catalogLeft(g.type)}`)
-      MenuItem({ content: '＋ 输入自定义名称…' })
-        .onClick(() => this.onAddCustom())
     }
   }
 
@@ -290,7 +304,7 @@ export struct SalaryPage {
               onEdit: (v: string) => this.onOtHours('holiday', v)
             })
             Row({ space: 8 }) {
-              Text('加班费基数（月）').fontSize(12).fontColor(C_SUB).width(104)
+              Text('加班费计算基数').fontSize(12).fontColor(C_SUB).width(104)
               TextInput({ text: this.snap.otBaseText })
                 .type(InputType.NUMBER_DECIMAL)
                 .height(30)

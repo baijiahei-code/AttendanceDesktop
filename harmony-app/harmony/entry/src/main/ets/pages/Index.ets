@@ -34,7 +34,7 @@ import { util } from '@kit.ArkTS';
 import { compute, countAttendance, Result } from '../core/calc';
 import { pyGroupedFixed, pyGeneral } from '../core/num';
 import { MinWageRow, minWageOf, minWageRegions } from '../core/minwage.data';
-import { PAYITEM_DEFAULT_NAME } from '../core/paycatalog';
+import { PAYITEM_DEFAULT_NAME, PAYITEM_GROUPS } from '../core/paycatalog';
 import { reportCsv, reportFileName, csvRow } from '../core/csv';
 import { ExportResult, Exporter } from '../model/Exporter';
 import { BookCache } from '../model/BookCache';
@@ -285,6 +285,7 @@ struct Index {
       }
     }
     await this.loadUnits();
+    await this.loadBaseLocks();
     await this.importSeedIfNeeded();
     const st = this.store;
     const now: Date = new Date();
@@ -292,6 +293,7 @@ struct Index {
     const m: number = now.getMonth() + 1;
     const key: string = this.monthKey(y, m);
     const loaded: MonthBook | null = await st.loadMonth(y, m);
+    let isNewMonth: boolean = false;
     if (loaded !== null) {
       this.book = loaded;
       this.corruptMonths.delete(key);
@@ -305,6 +307,7 @@ struct Index {
       // 新建月份带常用工资项（金额 0），与桌面版从 UI 新建月一致；不自动落盘
       this.book = createBook(y, m, '', true);
       this.saveState = `新月份 ${key}（未保存）`;
+      isNewMonth = true;
     }
     this.cache.set(this.monthKey(this.book.year, this.book.month), this.book);
     this.isLocked = this.book.locked;
@@ -313,8 +316,12 @@ struct Index {
       this.lockedMonths.add(key);
       this.saveLockedState();
     }
-    this.loadParamsForm();
+    // 工作地要先读回来：新月份要按它填内置表标准（与桌面版一致）
     await this.loadWorkRegion();
+    if (isNewMonth) {
+      this.fillRegionIntoNewMonth();
+    }
+    this.loadParamsForm();
     await this.refreshTemplates();
     await this.loadApiConfig();
     await this.refreshHistory();
@@ -477,6 +484,7 @@ struct Index {
     if (next === null && st !== null) {
       next = await st.loadMonth(y, m);
     }
+    let isNewMonth: boolean = false;
     if (next !== null) {
       this.book = next;
       this.corruptMonths.delete(key);
@@ -488,8 +496,13 @@ struct Index {
     } else {
       this.book = createBook(y, m, '', true);
       this.saveState = '新月份（未保存）';
+      isNewMonth = true;
     }
     this.cache.set(key, this.book);
+    if (isNewMonth) {
+      // 新月份：按当前选中的工作地填内置表标准；载入已有月份绝不覆盖
+      this.fillRegionIntoNewMonth();
+    }
 
     this.loadParamsForm();
     this.snap = Snap.from(this.book, 1);
@@ -766,6 +779,7 @@ struct Index {
 
   private toggleFundBaseLock(): void {
     this.fFundBaseLocked = !this.fFundBaseLocked;
+    this.saveBaseLocks();
   }
 
   /** 「一键填入提供正常劳动天数」：把统计出的正常劳动天数写进约定工作天数。 */
@@ -1072,9 +1086,10 @@ struct Index {
   }
 
   /**
-   * 进入参数页时的「跟随锁定态」同步（对应桌面版参数卡片构造时的
-   * `if self._ot_base_locked and mw > 0: ot_init = mw` / `_fund_base_locked`）。
-   * ⚠ 只在进参数页时做：薪酬页仍显示数据里保存的值（与 Windows 行为一致）。
+   * 进入参数页时给「还没填过」（<=0）的锁定字段补上最低工资。
+   *
+   * ⚠ 已保存的值一律保留：进参数页 / 切月都会走重建，若在这里无条件按最低工资
+   *   覆盖，用户手填的加班费计算基数、公积金缴费基数就会被静默改掉（与桌面版同口径）。
    */
   private syncLockedParamsOnEnter(): void {
     const b: MonthBook = this.book;
@@ -1082,11 +1097,11 @@ struct Index {
       return;
     }
     let changed: boolean = false;
-    if (this.otBaseLocked && Math.abs(b.overtime_base - b.min_wage) > 1e-9) {
+    if (this.otBaseLocked && b.overtime_base <= 0) {
       b.overtime_base = b.min_wage;
       changed = true;
     }
-    if (this.fFundBaseLocked && Math.abs(b.fund_base - b.min_wage) > 1e-9) {
+    if (this.fFundBaseLocked && b.fund_base <= 0) {
       b.fund_base = b.min_wage;
       changed = true;
     }
@@ -1245,6 +1260,37 @@ struct Index {
     this.refresh();
   }
 
+  /**
+   * 新建月份：按当前选中的工作地填入内置表标准（对应桌面版 `_region_fill_on_build`）。
+   *
+   * ⚠ 只给「刚创建、还没填过」的月份用；载入已有月份一律不碰。
+   *   锁定态的加班费计算基数 / 公积金缴费基数跟随最低工资，解锁的保持原值（与桌面版一致）。
+   * ⚠ 这里不调 refresh()：只是浏览到新月份时不应该产生写盘。
+   */
+  private fillRegionIntoNewMonth(): void {
+    if (this.fProvince.length === 0 || this.fRegion.length === 0) {
+      return;
+    }
+    const row: MinWageRow | null = minWageOf(this.fProvince, this.fRegion);
+    if (row === null) {
+      return;
+    }
+    const b: MonthBook = this.book;
+    this.fMinWage = `${row.month}`;
+    this.fParttimeMin = `${row.hour}`;
+    b.min_wage = row.month;
+    b.parttime_min = row.hour;
+    if (this.otBaseLocked) {
+      b.overtime_base = row.month;
+      this.fOvertimeBase = b.overtime_base.toString();
+    }
+    if (this.fFundBaseLocked) {
+      b.fund_base = row.month;
+      this.fFundBase = b.fund_base.toString();
+    }
+    this.wageHint = `${row.month} 元/月 · ${row.hour} 元/时`;
+  }
+
   /** 工作地 = 全局设置（与月份无关），存两行文本：省份 / 地区。 */
   private saveWorkRegion(): void {
     const st = this.settings;
@@ -1364,12 +1410,53 @@ struct Index {
   }
 
   // ================= 薪酬页：数据操作 =================
-  private addPayItem(): void {
+  /** 按类型分组插入：放在同类型最后一行之后（与桌面版 `_add_pay_item_at_back_of_type` 一致）。 */
+  private insertPayItem(item: PayItem): void {
+    const items: PayItem[] = this.book.pay_items;
+    let pos: number = items.length;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].type === item.type) {
+        pos = i + 1;
+        break;
+      }
+    }
+    items.splice(pos, 0, item);
+  }
+
+  /** 自定义名称：先用该类型默认名，被占则取该类型目录里第一个未用项，最后才加序号。 */
+  private freeCustomName(type: string): string {
+    const def: string | undefined = PAYITEM_DEFAULT_NAME.get(type);
+    const stem: string = def === undefined ? '自定义项' : def;
+    if (!this.hasPayItem(stem)) {
+      return stem;
+    }
+    for (const g of PAYITEM_GROUPS) {
+      if (g.type !== type) {
+        continue;
+      }
+      for (const cand of g.items) {
+        if (!this.hasPayItem(cand)) {
+          return cand;
+        }
+      }
+    }
+    let name: string = stem;
+    let n: number = 2;
+    while (this.hasPayItem(name)) {
+      name = `${stem}${n}`;
+      n = n + 1;
+    }
+    return name;
+  }
+
+  /**
+   * 菜单里的「输入自定义名称」：按所属类型新增一行（行内名称可直接改，与桌面版效果一致）。
+   */
+  private addPayItemCustom(type: string): void {
     if (this.isLocked) {
       return;
     }
-    const def: string | undefined = PAYITEM_DEFAULT_NAME.get('wage');
-    this.book.pay_items.push(new PayItem(def === undefined ? '自定义项' : def, 'wage', 0));
+    this.insertPayItem(new PayItem(this.freeCustomName(type), type, 0));
     this.refresh();
   }
 
@@ -1391,7 +1478,7 @@ struct Index {
     if (this.hasPayItem(name)) {
       return;
     }
-    this.book.pay_items.push(new PayItem(name, type, 0));
+    this.insertPayItem(new PayItem(name, type, 0));
     this.refresh();
   }
 
@@ -1490,6 +1577,7 @@ struct Index {
     }
     this.otBaseLocked = !this.otBaseLocked;
     this.fOvertimeBase = this.book.overtime_base.toString();
+    this.saveBaseLocks();
     this.refresh();
   }
 
@@ -1652,6 +1740,41 @@ struct Index {
     hilog.info(0x0000, 'ATTD', 'read units_locked=%{public}s locked=%{public}s err=%{public}s',
       String(lockedTxt), String(this.unitsLocked), st.lastError);
     this.rebuildUnitRows();
+  }
+
+  /**
+   * 读取两个字段级锁（加班费计算基数 / 公积金缴费基数）。
+   * 缺键（老版本设置 / 全新安装）→ 都按「锁定」处理，与桌面版 settings 默认一致。
+   */
+  private async loadBaseLocks(): Promise<void> {
+    const st = this.settings;
+    if (st === null) {
+      return;
+    }
+    const ot: string | null = await st.loadText('ot_base_locked');
+    const fund: string | null = await st.loadText('fund_base_locked');
+    this.otBaseLocked = ot === null ? true : ot === '1';
+    this.fFundBaseLocked = fund === null ? true : fund === '1';
+    hilog.info(0x0000, 'ATTD', 'read base locks ot=%{public}s fund=%{public}s err=%{public}s',
+      String(this.otBaseLocked), String(this.fFundBaseLocked), st.lastError);
+  }
+
+  /** 保存两个字段级锁（重启后保持解锁状态，否则重建时又会按最低工资覆盖）。 */
+  private saveBaseLocks(): void {
+    const st = this.settings;
+    if (st === null) {
+      return;
+    }
+    st.saveText('ot_base_locked', this.otBaseLocked ? '1' : '0').then((ok: boolean) => {
+      if (!ok) {
+        hilog.info(0x0000, 'ATTD', 'save ot_base_locked failed: %{public}s', st.lastError);
+      }
+    });
+    st.saveText('fund_base_locked', this.fFundBaseLocked ? '1' : '0').then((ok: boolean) => {
+      if (!ok) {
+        hilog.info(0x0000, 'ATTD', 'save fund_base_locked failed: %{public}s', st.lastError);
+      }
+    });
   }
 
   /**
@@ -2374,7 +2497,7 @@ struct Index {
         this.rebuildAnnual();
       }
       if (item.key === 'params' && this.pageKey !== 'params') {
-        // 桌面版每次进入参数页都会重建卡片 → 锁定态的加班费/公积金基数取月最低工资
+        // 桌面版每次进入参数页都会重建卡片 → 锁定字段只补空白值（不覆盖已保存的基数）
         this.syncLockedParamsOnEnter();
       }
       this.pageKey = item.key;
@@ -2731,7 +2854,7 @@ struct Index {
       otBaseLocked: this.otBaseLocked,
       onCopy: () => this.openCopyDialog(),
       onAddNamed: (n: string, t: string) => this.addPayItemNamed(n, t),
-      onAddCustom: () => this.addPayItem(),
+      onAddCustomOf: (t: string) => this.addPayItemCustom(t),
       onRename: (i: number, v: string) => this.renamePayItem(i, v),
       onAmount: (i: number, v: string) => this.setPayAmount(i, v),
       onType: (i: number, k: string) => this.setPayType(i, k),

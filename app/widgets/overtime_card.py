@@ -79,7 +79,7 @@ class OvertimeCardWidget(QFrame):
             "锁定时自动等于月最低工资；点击解锁可手动改为不同值（与参数页加班费计算基数同步）")
         ob_lay = QHBoxLayout()
         ob_lay.setSpacing(8)
-        ob_lab = QLabel("加班费基数（月）")
+        ob_lab = QLabel("加班费计算基数")
         ob_lab.setObjectName("fldLabel")
         ob_lay.addWidget(ob_lab)
         ob_lay.addStretch(1)

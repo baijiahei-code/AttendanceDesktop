@@ -657,6 +657,9 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
         self._data_version = 0
         self._rendered_versions.clear()
         book = self.store.load(year, month)
+        # 只有「新建月份」才允许参数页重建时用内置表覆盖最低工资等数值；
+        # 载入已有月份一律不覆盖（否则打开软件 / 切月回来就会把手填的基数改回官方表数值）。
+        self._region_fill_on_build = book is None
         if book is None:
             book = model.create_book(year, month, with_common_pay_items=True)
             err = getattr(self.store, "last_error", None)

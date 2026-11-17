@@ -22,6 +22,9 @@ from .widgets import Card
 class ParamsPageMixin:
     def _fill_params(self):
         b = self._book
+        # 两个字段级锁的锁态从设置读取（重启后保持）：否则每次重建参数页都回到
+        # 「锁定」，锁定态又会把用户手填的基数按最低工资覆盖。
+        self._ot_base_locked, self._fund_base_locked = self.store.load_base_locks()
         root = self.params_root
         if not hasattr(self, "_params_lay"):
             self._params_lay = QVBoxLayout(root)
@@ -265,11 +268,11 @@ class ParamsPageMixin:
             self._add_spin_field(card, attr, lab, decimals=dec, step=step,
                                  suffix=suf, tip=tip)
 
-        # —— 公积金缴费基数：带锁，默认锁定跟随 min_wage ——
-        self._fund_base_locked = True
+        # —— 公积金缴费基数：带锁（锁态由 _fill_params 从设置读入）——
         self._fund_base_lock_btn = make_lock_button(
             "锁定时自动等于月最低工资；点击解锁可手动改为不同值",
             self._toggle_fund_base_lock)
+        set_lock_button_state(self._fund_base_lock_btn, self._fund_base_locked)
 
         box = QVBoxLayout()
         box.setSpacing(3)
@@ -280,7 +283,9 @@ class ParamsPageMixin:
         #   公积金金额算成负数且没有任何提示（同 _add_spin_field 的口径）。
         # 如果被锁定，立即同步当前 min_wage；否则保留 book 里的值
         fund_init = float(getattr(b, "fund_base") or 0.0)
-        if self._fund_base_locked and b is not None:
+        # 锁定态只在「还没填过」（<=0）时用最低工资补空白；已保存的值一律保留
+        #（重建时无条件覆盖会让手填值在打开软件 / 切月后被最低工资顶掉）
+        if self._fund_base_locked and b is not None and fund_init <= 0:
             mw = float(getattr(b, "min_wage") or 0.0)
             if mw > 0:
                 fund_init = mw
@@ -449,11 +454,11 @@ class ParamsPageMixin:
                                self._sync_fund_base_with_min_wage(v)))
                 self._min_wage_spin = spin
 
-        # —— 加班费计算基数（独立锁，默认锁定=最低工资）——
-        self._ot_base_locked = True
+        # —— 加班费计算基数（独立锁；锁态由 _fill_params 从设置读入）——
         self._ot_base_lock_btn = make_lock_button(
             "锁定时自动等于月最低工资；点击解锁可手动改为不同值",
             self._toggle_ot_base_lock)
+        set_lock_button_state(self._ot_base_lock_btn, self._ot_base_locked)
 
         box = QVBoxLayout()
         box.setSpacing(3)
@@ -462,8 +467,8 @@ class ParamsPageMixin:
         ot_spin = NumberSpin(decimals=2, step=1, minimum=0.0)
         # ⚠ minimum=0：同公积金基数，负基数会让加班工资变成负数（默认值是 -1e12）。
         ot_init = float(getattr(self._book, "overtime_base") or 0.0)
-        # 锁态初始化：如果已有有效值 min_wage，则立即跟随
-        if self._ot_base_locked and self._book is not None:
+        # 锁态只在「还没填过」（<=0）时用最低工资补空白；已保存的值一律保留
+        if self._ot_base_locked and self._book is not None and ot_init <= 0:
             mw = float(getattr(self._book, "min_wage") or 0.0)
             if mw > 0:
                 ot_init = mw
@@ -496,15 +501,15 @@ class ParamsPageMixin:
                       "实际工作的小时数\n正常一个周期就是 24 小时；"
                       "不是 24 小时说明排班有问题")
 
-        # 初始化：如果已有 min_wage 且 overtime_base 仍锁定，同步一下
-        if self._ot_base_locked and self._min_wage_spin is not None:
-            self._sync_ot_base_with_min_wage(self._min_wage_spin.value())
-
-        # 初始化完成：按已选的省+区自动填入本地表数值（作为默认值）
+        # 初始化完成：按已选的省+区填入本地表数值
+        # ⚠ 只有「新建月份」才覆盖；载入已有月份只补空白值 —— 否则每次打开软件
+        #   都会把手填的最低工资 / 加班费计算基数 / 公积金缴费基数改回内置表数值。
         default_p = self._province_combo.currentText() if hasattr(self, "_province_combo") else ""
         default_r = self._region_combo.currentText() if hasattr(self, "_region_combo") else ""
         if default_p and default_p != "请选择省份" and default_r:
-            self._apply_region_local(default_p, default_r)
+            self._apply_region_local(
+                default_p, default_r,
+                overwrite=bool(getattr(self, "_region_fill_on_build", False)))
 
         return card
 
@@ -552,29 +557,51 @@ class ParamsPageMixin:
             return
         self._fetch_wage_api(province, region)
 
-    def _apply_region_local(self, province: str, region: str):
-        """只从内置静态表取值填入（切省/区、初始化、「📋 用本地表」时使用），不调 API。"""
+    def _apply_region_local(self, province: str, region: str, *, overwrite: bool = True):
+        """只从内置静态表取值填入（切省/区、「📋 用本地表」时使用），不调 API。
+
+        ``overwrite=False`` 只给「参数页重建」用：只补空白（<=0）的字段，不覆盖已保存的
+        数值 —— 否则每次打开软件 / 切月回来，手填的最低工资、加班费计算基数、公积金
+        缴费基数都会被内置表数值改掉。
+        """
         if self._book is None:
             return
         local = wages.fetch_local(province, region)
         if local is None:
-            self._set_status(f"{province} · {region} 不在内置表里，请用「🌐 联网查询」或手动输入",
-                             False)
+            if overwrite:
+                self._set_status(
+                    f"{province} · {region} 不在内置表里，请用「🌐 联网查询」或手动输入", False)
             return
         monthly = float(local["min_wage"])
         hourly = float(local["parttime_min"])
+        changed = False
         for attr, v in [("min_wage", monthly), ("parttime_min", hourly)]:
             spin = self._param_spins.get(attr)
             if spin is None:
+                continue
+            if not overwrite and float(getattr(self._book, attr) or 0.0) > 0:
                 continue
             spin.blockSignals(True)
             spin.setValue(v)
             spin.blockSignals(False)
             setattr(self._book, attr, v)
-        if self._ot_base_locked:
-            self._sync_ot_base_with_min_wage(monthly)
-        if getattr(self, "_fund_base_locked", False):
-            self._sync_fund_base_with_min_wage(monthly)
+            changed = True
+        if not changed:
+            return
+        if overwrite:
+            # 用户明确要「按这个地区填」→ 锁定态的两个基数跟着新标准走
+            if self._ot_base_locked:
+                self._sync_ot_base_with_min_wage(monthly)
+            if getattr(self, "_fund_base_locked", False):
+                self._sync_fund_base_with_min_wage(monthly)
+        else:
+            # 重建（只补空白）→ 只给「还没填过」的基数补默认，已保存的值一律不动
+            mw = float(getattr(self._book, "min_wage") or 0.0)
+            if self._ot_base_locked and float(getattr(self._book, "overtime_base") or 0.0) <= 0:
+                self._sync_ot_base_with_min_wage(mw)
+            if (getattr(self, "_fund_base_locked", False)
+                    and float(getattr(self._book, "fund_base") or 0.0) <= 0):
+                self._sync_fund_base_with_min_wage(mw)
         self._changed()
         self._set_status(f"已按 {province} · {region} 填入本地官方最低工资标准", True)
 
@@ -877,6 +904,15 @@ class ParamsPageMixin:
         if hasattr(self, "_sync_ot_base_value_salary"):
             self._sync_ot_base_value_salary(min_wage_val)
 
+    def _save_base_locks(self):
+        """把两个字段级锁写进设置（重启后保持解锁 / 锁定状态）。"""
+        try:
+            self.store.save_base_locks(
+                ot_base_locked=bool(getattr(self, "_ot_base_locked", True)),
+                fund_base_locked=bool(getattr(self, "_fund_base_locked", True)))
+        except Exception:
+            traceback.print_exc()
+
     def _toggle_ot_base_lock(self):
         """锁定 / 解锁加班费计算基数。
         重锁时仅冻结用户值（禁用编辑），不立即用 min_wage 覆盖；
@@ -887,6 +923,7 @@ class ParamsPageMixin:
         ot_spin = self._param_spins.get("overtime_base")
         set_field_locked(ot_spin, self._ot_base_locked)
         set_lock_button_state(self._ot_base_lock_btn, self._ot_base_locked)
+        self._save_base_locks()
         if self._ot_base_locked:
             self._set_status("已锁定：加班费计算基数保持当前值（后续最低工资变化会同步）", True)
         else:
@@ -922,6 +959,7 @@ class ParamsPageMixin:
                 self._set_status("已锁定：公积金缴费基数保持当前值（后续最低工资变化会同步）", True)
             else:
                 self._set_status("已解锁：可手动设置公积金缴费基数", True)
+        self._save_base_locks()
 
     def _toggle_wage_lock(self):
         """锁定 / 解锁最低工资输入。

@@ -87,7 +87,7 @@ LOCKED_INPUT_QSS = "background:#F5F7FA;color:#667085;"
 # 锁定月的只读提示横幅
 LOCK_BANNER_TEXT = "🔒  当前月份已锁定 · 仅供查看，所有修改操作已屏蔽"
 
-# 「跟随最低工资」类字段的切锁按钮文案（最低工资 / 加班费基数 / 公积金基数共用）
+# 「跟随最低工资」类字段的切锁按钮文案（最低工资 / 加班费计算基数 / 公积金基数共用）
 LOCK_BTN_LOCKED_TEXT = "🔒 已锁定 · 冻结当前值"
 LOCK_BTN_UNLOCKED_TEXT = "🔓 已解锁 · 可手动修改"
 

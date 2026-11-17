@@ -38,9 +38,9 @@ export function overtimeRateText(): string {
     + `法定节假日×${pyFixed(OT_RATE_HOLIDAY, 1)}`;
 }
 
-/** 加班时薪折算方式提示（如「时薪 = 加班费基数 ÷（21.75 × 8 = 174 小时）」）。 */
+/** 加班时薪折算方式提示（如「时薪 = 加班费计算基数 ÷（21.75 × 8 = 174 小时）」）。 */
 export function overtimeHourlyTip(): string {
-  return `时薪 = 加班费基数 ÷（${pyGeneral(PAYABLE_DAYS)} × 8 = ${pyGeneral(PAYABLE_DAYS * 8)} 小时）`;
+  return `时薪 = 加班费计算基数 ÷（${pyGeneral(PAYABLE_DAYS)} × 8 = ${pyGeneral(PAYABLE_DAYS * 8)} 小时）`;
 }
 
 // ====== 出勤统计 ======

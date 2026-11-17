@@ -1798,3 +1798,71 @@ try:
 finally:
     _w._render_report_body = _orig_render_body
 print("report page single scroll + fallback OK")
+
+# ---- ⑩ 参数页重建不覆盖手填基数 + 字段级锁持久化（2026-11-17）----
+
+# 10.1 重新打开软件：已保存的最低工资 / 加班费计算基数 / 公积金缴费基数 不得被内置表改写
+#   修复前：参数页每次重建都用内置表重填 min_wage，且两个基数锁是会话级的（一律回到「锁定」）
+#   → 打开软件 / 切月回来就把手填的 5000/4000/3000 全改成 2170（= 安徽·池州 内置值）。
+_rb_dir = tempfile.mkdtemp(prefix="att_rebuild_")
+_w_rb = MainWindow(MonthStore(_rb_dir))
+_b_rb = _w_rb._book
+_w_rb._wage_lock_btn.click()            # 解锁最低工资才能手填
+_w_rb._param_spins["min_wage"].setValue(5000.0)
+_w_rb._ot_base_lock_btn.click()         # 解锁加班费计算基数
+_w_rb._param_spins["overtime_base"].setValue(4000.0)
+_w_rb._fund_base_lock_btn.click()       # 解锁公积金缴费基数
+_w_rb._param_spins["fund_base"].setValue(3000.0)
+assert (_b_rb.min_wage, _b_rb.overtime_base, _b_rb.fund_base) == (5000.0, 4000.0, 3000.0), (
+    _b_rb.min_wage, _b_rb.overtime_base, _b_rb.fund_base)
+_w_rb._flush_changed()
+_w_rb._change_timer.stop()
+
+_w_rb2 = MainWindow(MonthStore(_rb_dir))
+_b_rb2 = _w_rb2._book
+assert (_b_rb2.min_wage, _b_rb2.overtime_base, _b_rb2.fund_base) == (5000.0, 4000.0, 3000.0), (
+    "重新打开后被覆盖：", _b_rb2.min_wage, _b_rb2.overtime_base, _b_rb2.fund_base)
+assert _w_rb2._param_spins["min_wage"].value() == 5000.0
+assert _w_rb2._param_spins["overtime_base"].value() == 4000.0
+assert _w_rb2._param_spins["fund_base"].value() == 3000.0
+
+# 10.2 切月往返同样不得覆盖
+_rb_y, _rb_m = _b_rb2.year, _b_rb2.month
+_w_rb2._go(_rb_y, (_rb_m % 12) + 1)
+_w_rb2._go(_rb_y, _rb_m)
+_b_rb3 = _w_rb2._book
+assert (_b_rb3.min_wage, _b_rb3.overtime_base, _b_rb3.fund_base) == (5000.0, 4000.0, 3000.0), (
+    "切月往返后被覆盖：", _b_rb3.min_wage, _b_rb3.overtime_base, _b_rb3.fund_base)
+_w_rb2._change_timer.stop()
+
+# 10.3 锁态持久化：解锁后重开仍是解锁（否则下次重建又会按最低工资覆盖）
+assert _w_rb2._ot_base_locked is False and _w_rb2._fund_base_locked is False
+assert _w_rb2._param_spins["overtime_base"].isEnabled(), "解锁态没恢复：加班费计算基数不可编辑"
+
+# 10.4 「锁定 = 跟随最低工资」的旧语义保留
+_w_lk = MainWindow(MonthStore(tempfile.mkdtemp(prefix="att_lock_")))
+_w_lk._wage_lock_btn.click()
+_w_lk._param_spins["min_wage"].setValue(3000.0)
+_b_lk = _w_lk._book
+assert (_b_lk.overtime_base, _b_lk.fund_base) == (3000.0, 3000.0), (
+    "锁定态应跟随最低工资：", _b_lk.overtime_base, _b_lk.fund_base)
+_w_lk._change_timer.stop()
+
+# 10.5 老存档里基数为 0（空白）→ 锁定时仍补成最低工资；已保存的最低工资不被改写
+_blank_dir = tempfile.mkdtemp(prefix="att_blank_")
+_b_blank = model.create_book(2026, 5)
+_b_blank.min_wage, _b_blank.overtime_base, _b_blank.fund_base = 2500.0, 0.0, 0.0
+MonthStore(_blank_dir).save(_b_blank)
+_w_blank = MainWindow(MonthStore(_blank_dir))
+_w_blank._go(2026, 5)
+assert (_w_blank._book.overtime_base, _w_blank._book.fund_base) == (2500.0, 2500.0), (
+    "空白基数应补成最低工资：", _w_blank._book.overtime_base, _w_blank._book.fund_base)
+assert _w_blank._book.min_wage == 2500.0, "已保存的最低工资被内置表改写了"
+_w_blank._change_timer.stop()
+
+# 10.6 名称统一：薪酬卡标签 / 加班时薪提示都叫「加班费计算基数」
+assert "加班费计算基数" in calc.overtime_hourly_tip(), calc.overtime_hourly_tip()
+_ot_texts = [_l.text() for _l in _w_lk._ot_card.findChildren(QLabel)]
+assert "加班费计算基数" in _ot_texts, _ot_texts
+assert "加班费基数（月）" not in _ot_texts, _ot_texts
+print("params rebuild keeps manual bases + lock persistence OK")

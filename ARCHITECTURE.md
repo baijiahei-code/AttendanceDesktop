@@ -693,7 +693,7 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
     「SM2(C1C3C2) + SM4-CBC + HMAC-SM3」，而 Windows 实际走 DPAPI（无密钥文件、不涉及国密）。
     改为按后端给出真实描述；`key_ready` 在非 `gm` 后端恒为 True（不存在的密钥文件不再被当成“未就绪”）
 11. **最低工资静默换成别的城市**：`wages.get(省, 市)` 在「指定了市但内置表里没有」时会返回该省**第一个**
-    城市的数字 → 相当于把另一个地方的标准写进账本（还联动加班基数 / 公积金基数），用户看不出来。
+    城市的数字 → 相当于把另一个地方的标准写进账本（还联动加班费计算基数 / 公积金基数），用户看不出来）。
     改为返回 `None`（调用方本来就判 `is not None`；顺带去掉这类误报的“与内置表不一致”提醒）
 12. **节假日日型判定有两套优先级**：内置表走 `day_kind()`（法定→补班→放假），API 铺设写的是
     （补班→法定→放假）→ 同一天在两处会得到不同结论。抽出 `holidays.classify_day()`（关键字传参，
@@ -734,7 +734,7 @@ spin.valueChanged  →  `_on_salary_attr(attr)`
     `WA_DeleteOnClose`（弹层）或读完 `chosen.data()` 后 `deleteLater()`
 22. **日历星期表头是幽灵控件**：`_render_calendar` 重绘时只 `takeAt(0)` 不删除 →
     每次重绘泄漏 7 个 QLabel（与 `_clear_layout` 注释里记的是同一个坑）。改为隐藏 + `deleteLater()`
-23. **参数页两个手建的 spin 绕过了 `minimum=0`**（加班费基数 / 公积金缴费基数）：解锁字段后能填负数，
+23. **参数页两个手建的 spin 绕过了 `minimum=0`**（加班费计算基数 / 公积金缴费基数）：解锁字段后能填负数，
     负基数会让加班工资 / 公积金算成负数且没有任何提示（同页其它字段在工厂里就挡住了）。
     另：备注框原来用 `textChanged` 且套用模板**不回填** → 界面还是旧文字，用户再敲一个字符
     就把模板里的备注整段顶掉；`_apply_template` 的 `_loading` 也没有 `try/finally`
