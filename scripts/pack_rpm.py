@@ -60,11 +60,13 @@ from pack_deb import (  # noqa: E402  —— 复用而非复制
     MAINTAINER,
     PKG,
     PUB,
+    PYTHON_LICENSE_STUB,
     RECOMMENDS,
     ROOT,
     SPEC,
     build_machine_glibc,
     build_machine_glibc_version,
+    find_python_license,
     normalize_perms,
     read_version,
     run,
@@ -186,6 +188,8 @@ $lib_dir
 /usr/share/applications/$pkg.desktop
 $icon_line
 %license /usr/share/licenses/$pkg/COPYING
+%license /usr/share/licenses/$pkg/THIRD_PARTY_NOTICES.md
+%license /usr/share/licenses/$pkg/LICENSE.Python.txt
 
 %changelog
 $changelog
@@ -251,6 +255,20 @@ def assemble_pkgroot(version: str, arch: str) -> Path:
         (lic_dir / "COPYING").write_text(
             "本程序以 GNU GPL v3（或更新版本）发布，全文见项目仓库 LICENSE 文件。\n",
             encoding="utf-8")
+    # 第三方组件（PySide6/Qt 等）的声明与全文：LGPL 要求显著声明 + 附全文 + 可替换
+    notices = ROOT / "THIRD_PARTY_NOTICES.md"
+    if notices.exists():
+        shutil.copy2(notices, lic_dir / "THIRD_PARTY_NOTICES.md")
+    else:
+        print("  [warn] 缺少 THIRD_PARTY_NOTICES.md，rpm 将缺少第三方组件声明")
+    # CPython 的 LICENSE（汇总了其内嵌组件如 OpenSSL / zlib / expat 等条款）
+    py_lic = find_python_license()
+    if py_lic is not None:
+        shutil.copy2(py_lic, lic_dir / "LICENSE.Python.txt")
+        print(f"  CPython LICENSE -> {lic_dir / 'LICENSE.Python.txt'}  (源: {py_lic})")
+    else:
+        (lic_dir / "LICENSE.Python.txt").write_text(PYTHON_LICENSE_STUB, encoding="utf-8")
+        print("  [warn] 未找到 CPython LICENSE，写入指引版本")
 
     normalize_perms(pkgroot)
     size_mb = sum(f.stat().st_size for f in pkgroot.rglob("*") if f.is_file()) / 1024 / 1024

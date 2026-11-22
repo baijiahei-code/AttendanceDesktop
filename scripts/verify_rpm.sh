@@ -48,7 +48,9 @@ for f in /usr/bin/attendance-desktop \
          /usr/share/applications/attendance-desktop.desktop \
          /usr/share/icons/hicolor/256x256/apps/attendance-desktop.png \
          /usr/lib/attendance-desktop/AttendanceDesktop \
-         /usr/share/licenses/attendance-desktop/COPYING; do
+         /usr/share/licenses/attendance-desktop/COPYING \
+         /usr/share/licenses/attendance-desktop/THIRD_PARTY_NOTICES.md \
+         /usr/share/licenses/attendance-desktop/LICENSE.Python.txt; do
     case "$listing" in
         *"$f"*) echo "  [OK] $f" ;;
         *)      echo "  [缺失] $f" ;;

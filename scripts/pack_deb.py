@@ -29,7 +29,9 @@
 """
 from __future__ import annotations
 
+import datetime
 import email.utils
+import glob
 import gzip
 import os
 import re
@@ -50,6 +52,44 @@ LIB_DIR = f"/usr/lib/{PKG}"         # 程序本体安装位置（FHS：非 /opt 
 DEFAULT_VERSION = "1.0.0"
 MAINTAINER = "柯一鸣 <193697875+baijiahei-code@users.noreply.github.com>"
 HOMEPAGE = "https://github.com/baijiahei-code/AttendanceDesktop"
+
+# DEP-5 的 Copyright 年份：首年固定，构建年份自动延伸（同年写 `2026`，跨年写 `2026-2027`）。
+# ⇒ 「年份覆盖已发布版本」不需要每年手工改，构建时自动完成。
+COPYRIGHT_START_YEAR = 2026
+COPYRIGHT_HOLDER = "柯一鸣"
+
+# 构建机找不到 CPython 自带 LICENSE 时的兑底（只给指引，不伪造条款原文）。
+PYTHON_LICENSE_STUB = """本发行包内的 Python 运行时由 Python Software Foundation 以
+PSF License Agreement 2.0 授权（其内嵌组件 OpenSSL / zlib / expat / libffi / bzip2 /
+liblzma / libzstd 等各自保留原有许可）。完整条款见
+https://docs.python.org/3/license.html
+
+组件清单与其余第三方声明见同目录的 THIRD_PARTY_NOTICES.md。
+（构建机未找到 CPython 自带的 LICENSE 文件，故此处为指引版本。）
+"""
+
+
+def copyright_years(today: datetime.date | None = None) -> str:
+    """DEP-5 推荐的年份写法：同年 `2026`，跨年 `2026-2027`（随构建年份自动延伸）。"""
+    year = (today or datetime.date.today()).year
+    last = max(COPYRIGHT_START_YEAR, year)
+    if last == COPYRIGHT_START_YEAR:
+        return str(last)
+    return f"{COPYRIGHT_START_YEAR}-{last}"
+
+
+def find_python_license() -> Path | None:
+    """找构建解释器自带的 CPython LICENSE（其内部已汇总 CPython 内嵌组件的许可）。"""
+    cands: list[Path] = []
+    for base in dict.fromkeys([sys.base_prefix, sys.prefix]):
+        cands += [Path(base) / "LICENSE.txt", Path(base) / "LICENSE"]
+    # Debian / Ubuntu 的 CPython 把许可放在 /usr/share/doc/python3.X/copyright
+    cands += [Path(p) for p in sorted(glob.glob("/usr/share/doc/python3.*/copyright"),
+                                      reverse=True)]
+    for p in cands:
+        if p.is_file():
+            return p
+    return None
 
 # Qt6 运行时依赖：Depends 只放"缺了必然起不来"的，可选的放 Recommends
 # ⚠ libc6 单独拼（要带版本下限，见 build_machine_glibc_version），故不写在这里
@@ -100,13 +140,16 @@ set -e
 exit 0
 """
 
-# Debian 政策 §12.5：每个包必须附版权声明（用机器可读格式，许可全文引用系统自带副本）
+# Debian 政策 §12.5：每个包必须附版权声明（用机器可读格式，许可全文引用系统自带副本）。
+# ⚠ PyInstaller 产物里带 PySide6 / Qt / openpyxl 等第三方二进制，不能全部算作本项目所有：
+#   单写一个 `Files: *` 会把 Qt 的 .so 也声明成「柯一鸣 + GPL」，与事实不符。
+#   DEP-5 的规则是「后匹配的段落覆盖先匹配的」，所以把具体组件的段落放在 `Files: *` 之后。
 COPYRIGHT = """Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: AttendanceDesktop
 Source: {homepage}
 
 Files: *
-Copyright: 2026 柯一鸣
+Copyright: {years} {holder}
 License: GPL-3.0-or-later
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -125,6 +168,137 @@ License: GPL-3.0-or-later
  GPL 第 3 版或（由你选择）任何更新版本的规定重新发布和/或修改它；本程序不提供
  任何担保，包括适销性与特定用途适用性的默示担保。完整许可见上方系统路径，
  仓库内亦附副本：LICENSE
+ .
+ 本段仅适用于本项目自行创建的文件（启动脚本用户可见部分、.desktop、图标、文档）
+ 以及下方未单独声明的文件。包内第三方组件见后续各段与 THIRD_PARTY_NOTICES.md。
+
+Files: usr/lib/{pkg}/_internal/*
+Copyright: various third-party authors (see THIRD_PARTY_NOTICES.md)
+License: mixed
+ 该目录由 PyInstaller 收集而来，内容为第三方运行时与数据（Qt/PySide6、CPython、
+ GTK/GLib 依赖链、X11/XCB、ICU、Kerberos、OpenSSL、zlib 等），不是本项目的作品，
+ 本项目不对其主张版权。下面按组件/许可族列出主要段落；未单列的文件按各自上游
+ 许可执行，版权行与全文见 usr/share/doc/{pkg}/THIRD_PARTY_NOTICES.md。
+
+Files: usr/lib/{pkg}/_internal/app/*
+Copyright: {years} {holder}
+License: GPL-3.0-or-later
+ 本项目自己的 Python 包（app/）与图标，条款同第一段（GPL-3.0-or-later）。
+
+Files: usr/lib/{pkg}/AttendanceDesktop
+Copyright: {years} {holder}; PyInstaller Development Team; and the authors of the bundled libraries
+License: GPL-3.0-or-later
+ 该可执行文件由本项目源码 + PyInstaller 引导器（GPL-2.0-or-later 及其允许打包
+ 异许可程序的特别例外）构建；其中还内嵌了第三方库的编译字节码（如 openpyxl、
+ gmssl），其许可见 THIRD_PARTY_NOTICES.md。GPL 全文见
+ /usr/share/common-licenses/GPL-3 与 THIRD_PARTY_NOTICES.md。
+
+Files: usr/lib/{pkg}/_internal/libQt6*
+       usr/lib/{pkg}/_internal/libpyside6*
+       usr/lib/{pkg}/_internal/libshiboken6*
+       usr/lib/{pkg}/_internal/PySide6/*
+       usr/lib/{pkg}/_internal/shiboken6/*
+Copyright: The Qt Company Ltd. and contributors
+License: LGPL-3.0-only
+ 随包的 Qt 6 库与 PySide6 / shiboken6 绑定（未修改），本项目按 LGPL v3 使用。
+ .
+ 许可全文、组件清单与「如何替换/重新链接」见
+ /usr/share/doc/{pkg}/THIRD_PARTY_NOTICES.md；系统内 GPL/LGPL 全文分别在
+ /usr/share/common-licenses/GPL-3 与 /usr/share/common-licenses/LGPL-3。
+
+Files: usr/lib/{pkg}/_internal/libicu*
+       usr/lib/{pkg}/_internal/PySide6/Qt/lib/libicu*
+Copyright: Unicode, Inc. and contributors
+License: Unicode-3.0
+ ICU 库（Qt 的依赖）；完整条款见 https://www.unicode.org/license.txt
+
+Files: usr/lib/{pkg}/_internal/libpython3*
+       usr/lib/{pkg}/_internal/base_library.zip
+       usr/lib/{pkg}/_internal/python3*/*
+       usr/lib/{pkg}/_internal/python3*.dll
+       usr/lib/{pkg}/_internal/python*.dll
+       usr/lib/{pkg}/_internal/*.pyd
+Copyright: Python Software Foundation and contributors
+License: PSF-2.0
+ CPython 运行时及其标准库扩展。完整条款（CPython 的 LICENSE 同时汇总了其内嵌的
+ OpenSSL / zlib / expat / libffi / bzip2 / liblzma / libzstd 等组件）见同目录的
+ LICENSE.Python.txt。
+
+Files: usr/lib/{pkg}/_internal/libssl.so*
+       usr/lib/{pkg}/_internal/libcrypto.so*
+       usr/lib/{pkg}/_internal/libssl-*.dll
+       usr/lib/{pkg}/_internal/libcrypto-*.dll
+Copyright: The OpenSSL Project Authors
+License: Apache-2.0
+ OpenSSL 3.x；完整条款见 LICENSE.Python.txt（CPython 附带）或
+ https://www.openssl.org/source/license.html
+
+Files: usr/lib/{pkg}/_internal/libgtk-3.so*
+       usr/lib/{pkg}/_internal/libgdk-3.so*
+       usr/lib/{pkg}/_internal/libgdk_pixbuf-2.0.so*
+       usr/lib/{pkg}/_internal/libglib-2.0.so*
+       usr/lib/{pkg}/_internal/libgobject-2.0.so*
+       usr/lib/{pkg}/_internal/libgio-2.0.so*
+       usr/lib/{pkg}/_internal/libgmodule-2.0.so*
+       usr/lib/{pkg}/_internal/libgthread-2.0.so*
+       usr/lib/{pkg}/_internal/libatk-1.0.so*
+       usr/lib/{pkg}/_internal/libatk-bridge-2.0.so*
+       usr/lib/{pkg}/_internal/libatspi.so*
+       usr/lib/{pkg}/_internal/libcairo.so*
+       usr/lib/{pkg}/_internal/libcairo-gobject.so*
+       usr/lib/{pkg}/_internal/libpango-1.0.so*
+       usr/lib/{pkg}/_internal/libpangocairo-1.0.so*
+       usr/lib/{pkg}/_internal/libpangoft2-1.0.so*
+       usr/lib/{pkg}/_internal/libepoxy.so*
+       usr/lib/{pkg}/_internal/libgcrypt.so*
+       usr/lib/{pkg}/_internal/libgpg-error.so*
+Copyright: The GTK, GLib, ATK, Pango, Cairo and Libgcrypt teams
+License: LGPL-2.1-or-later
+ GTK3 主题插件（libqgtk3.so）连带引入的依赖链。各库按其上游条款执行
+ （其中 cairo 亦可用 MPL-1.1）；完整文本见
+ https://gitlab.gnome.org/GNOME / https://gitlab.freedesktop.org/cairo 等上游仓库。
+
+Files: usr/lib/{pkg}/_internal/libX*
+       usr/lib/{pkg}/_internal/libxcb*
+       usr/lib/{pkg}/_internal/libxkbcommon*
+Copyright: The X.Org Foundation, the XCB authors and contributors
+License: MIT
+ X11 / XCB / xkbcommon 运行时库；许可见各上游项目的 COPYING。
+
+Files: usr/lib/{pkg}/_internal/libstdc++.so*
+       usr/lib/{pkg}/_internal/libgcc_s.so*
+       usr/lib/{pkg}/_internal/libatomic.so*
+Copyright: Free Software Foundation, Inc.
+License: GPL-3.0-or-later with GCC exception
+ GCC 运行时库（GCC Runtime Library Exception 3.1）；例外条款见 libstdc++ 随附的
+ COPYING.RUNTIME（https://gcc.gnu.org/onlinedocs/libstdc++/manual/license.html）。
+
+Files: usr/lib/{pkg}/_internal/Cryptodome/*
+Copyright: PyCryptodome contributors
+License: BSD-2-Clause
+ The source code of PyCryptodome is partially in the public domain and
+ partially released under the BSD 2-Clause license.
+ .
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are met:
+ 1. Redistributions of source code must retain the above copyright notice,
+    this list of conditions and the following disclaimer.
+ 2. Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ .
+ 完整文本（含 Public Domain 部分）见 usr/share/doc/{pkg}/THIRD_PARTY_NOTICES.md。
 """
 
 # Debian 政策 §12.7：每个包必须附变更记录（native 包用 changelog.gz）
@@ -278,7 +452,25 @@ def assemble(deb_root: Path, version: str, arch: str) -> None:
     # Debian 政策要求：每个包必须附版权声明（§12.5）与变更记录（§12.7）
     doc = deb_root / "usr" / "share" / "doc" / PKG
     doc.mkdir(parents=True, exist_ok=True)
-    (doc / "copyright").write_text(COPYRIGHT.format(homepage=HOMEPAGE), encoding="utf-8")
+    (doc / "copyright").write_text(
+        COPYRIGHT.format(homepage=HOMEPAGE, pkg=PKG,
+                         years=copyright_years(), holder=COPYRIGHT_HOLDER),
+        encoding="utf-8")
+    # 第三方组件（PySide6/Qt 等）的声明与许可全文：LGPL 要求显著声明 + 附全文
+    notices = ROOT / "THIRD_PARTY_NOTICES.md"
+    if notices.exists():
+        shutil.copy2(notices, doc / "THIRD_PARTY_NOTICES.md")
+    else:
+        print("  [warn] 缺少 THIRD_PARTY_NOTICES.md，deb 将缺少第三方组件声明")
+    # CPython 的 LICENSE：同时汇总了 CPython 内嵌的 OpenSSL / zlib / expat / libffi 等条款，
+    # 比只写一句 PSF-2.0 更准确（见 copyright 里的 PSF 段）。
+    py_lic = find_python_license()
+    if py_lic is not None:
+        shutil.copy2(py_lic, doc / "LICENSE.Python.txt")
+        print(f"  CPython LICENSE -> {doc / 'LICENSE.Python.txt'}  (源: {py_lic})")
+    else:
+        (doc / "LICENSE.Python.txt").write_text(PYTHON_LICENSE_STUB, encoding="utf-8")
+        print("  [warn] 未找到 CPython LICENSE，写入指引版本")
     (doc / "changelog.gz").write_bytes(gzip.compress(
         CHANGELOG.format(pkg=PKG, version=version, maintainer=MAINTAINER,
                          date=email.utils.formatdate(localtime=True)).encode("utf-8"),

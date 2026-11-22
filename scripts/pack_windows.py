@@ -129,6 +129,28 @@ if lic.exists():
 else:
     print("  [warn] LICENSE not found; package will not include the license text")
 
+# 第三方组件合规：PySide6/Qt（LGPL-3.0）、openpyxl（MIT）等随包分发，
+# 必须附上组件清单、版权声明与许可全文（LGPL 要求“显著声明 + 附全文 + 可替换”）。
+tpn = ROOT / "THIRD_PARTY_NOTICES.md"
+if tpn.exists():
+    shutil.copy2(tpn, EXE.parent / "THIRD_PARTY_NOTICES.md")
+    print(f"  THIRD_PARTY_NOTICES -> {EXE.parent / 'THIRD_PARTY_NOTICES.md'}")
+else:
+    print("  [warn] THIRD_PARTY_NOTICES.md not found; bundle will lack third-party notices")
+
+# Python 运行时许可：CPython 自带 LICENSE.txt 汇总了它内嵌的 OpenSSL / zlib / expat /
+# libffi / bzip2 / liblzma / libzstd 等条款（Windows 包里的 python3*.dll / *.pyd 就用它）。
+_py_lic = None
+for _cand in (Path(sys.base_prefix) / "LICENSE.txt", Path(sys.base_prefix) / "LICENSE"):
+    if _cand.is_file():
+        _py_lic = _cand
+        break
+if _py_lic is not None:
+    shutil.copy2(_py_lic, EXE.parent / "LICENSE.Python.txt")
+    print(f"  LICENSE.Python.txt -> {EXE.parent / 'LICENSE.Python.txt'}")
+else:
+    print("  [warn] CPython LICENSE not found; bundle will lack LICENSE.Python.txt")
+
 # 冻结包内容校验：关键依赖必须真的进了 PYZ。
 # 光看 PyInstaller 退出码 / 进程存活不够 —— 用错解释器时会静默漏包，
 # 双击后只弹出「No module named 'gmssl'」，冒烟的 alive 却仍是 True。

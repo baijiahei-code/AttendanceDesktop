@@ -411,7 +411,7 @@ PyInstaller **不能交叉编译**，而且会把构建机的 `libpython`、`lib
 | 依赖字段 | `Depends:` / `Recommends:`（Debian 包名） | `Requires:` / `Recommends:`（RPM 包名，**由 deb 侧清单自动映射**：`libc6`→`glibc`、`libgl1`→`mesa-libGL`、`libdbus-1-3`→`dbus-libs`、`libxcb-cursor0`→`xcb-util-cursor` …） |
 | glibc 版本下限 | `Depends: libc6 (>= 构建机 glibc)` | `Requires: glibc >= 构建机 glibc` |
 | 软依赖特例 | `Recommends:` 里的 xcb 组件与 CJK 字体 | `xcb-util-cursor` **只能写 `Recommends`** —— 它仅在 openEuler 的 EPOL 仓库，写成 `Requires` 会让未启用 EPOL 的机器**整包装不上**（该库是 Qt6 xcb 插件的硬需求，故 README 单独说明补装方式） |
-| 许可文件 | `/usr/share/doc/<pkg>/copyright`（Debian 政策 §12.5） | `/usr/share/licenses/<pkg>/COPYING`（`%license`） |
+| 许可文件 | `/usr/share/doc/<pkg>/copyright`（Debian 政策 §12.5，逐组件声明）+ `THIRD_PARTY_NOTICES.md` | `/usr/share/licenses/<pkg>/COPYING` + `THIRD_PARTY_NOTICES.md`（均 `%license`） |
 | 变更记录 | `changelog.gz`（§12.7） | `.spec` 的 `%changelog` 段 |
 | 入口 | `./一键打包.sh`（默认） | `./一键打包.sh rpm` |
 | 一次出齐 | `./一键打包.sh all`（两者各跑一遍 PyInstaller，耗时翻倍） | |
@@ -422,6 +422,12 @@ PyInstaller **不能交叉编译**，而且会把构建机的 `libpython`、`lib
 安装时报「依赖不满足」。关掉后改为显式声明：`Requires` = glibc 版本下限 + 缺了必然起不来的
 Qt 运行时库（`libxkbcommon-x11` / `mesa-libGL` / `mesa-libEGL` / `fontconfig` / `dbus-libs`），
 可选组件与 `xcb-util-cursor` 放 `Recommends`。
+
+📌 **版权年份自动覆盖**：deb 的 `usr/share/doc/<pkg>/copyright` 里的 `Copyright:` 由
+`pack_deb.COPYRIGHT_START_YEAR`（首年 2026）与**构建当年**自动生成 —— 同年写 `2026`，
+跨年写 `2026-2027`，发行新版本时不需要手工改（DEP-5 推荐这种 `YYYY[-YYYY]` 写法）。
+版权声明是**逐组件**的：项目自身 GPL-3.0-or-later，Qt/PySide6 为 LGPL-3.0-only，
+CPython 为 PSF-2.0（随包附 `LICENSE.Python.txt`），其余依赖按实际许可分组声明。
 
 两种格式各有一个免 root 的验证脚本：`verify_deb.sh`（`dpkg-deb -I/-c/-x`）与
 `verify_rpm.sh`（`rpm -qpi/-qpl/-qplv` + `rpm2cpio | cpio -idm`；⚠ 不用 `rpm2archive`，

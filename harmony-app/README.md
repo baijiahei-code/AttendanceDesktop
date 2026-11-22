@@ -12,7 +12,7 @@ harmony-app/
 ├─ fixtures/   对拍基准目录（`baseline.json` 含真实工资，**本地生成、不入库**）
 ├─ scripts/    对拍导出、数据表导出、HAP 构建等工具
 ├─ docs/       移植方案与进度
-└─ harmony/    鸿蒙工程（DevEco Studio 工程，2in1 / API 26）
+└─ harmony/    鸿蒙工程（DevEco Studio 工程，2in1 / target API 26，兼容 API 24）
 ```
 
 `core/` 的硬约束：**必须同时满足 Node（vitest）与 ArkTS 语法** —— 禁 `any`/`unknown`、
@@ -33,7 +33,8 @@ npm test          # 单元用例（纯逻辑）+ 对拍用例（需本地生成 
 
 ## 构建 HAP
 
-前置：**DevEco Studio 26.x**（含 HarmonyOS SDK）、Node.js。
+前置：**DevEco Studio 26.x**（含 HarmonyOS SDK）、Node.js
+（用 DevEco 自带的即可；本机实测 v24.14.1，`package.json` 声明 `>=18`）。
 
 ### 一键打包（推荐）
 
@@ -234,6 +235,14 @@ java -jar "D:\DevEco Studio\sdk\default\openharmony\toolchains\lib\app_check_too
 ## 许可证
 
 GNU General Public License v3.0 or later（SPDX：`GPL-3.0-or-later`），
-全文见仓库根目录 [`LICENSE`](../LICENSE)。
+全文见仓库根目录 [`LICENSE`](../LICENSE)；构建出的 HAP 内 `resources/rawfile/LICENSE`
+也附有同一份全文。
+
+本平台版本使用 **HarmonyOS SDK** 开发，适用《HarmonyOS SDK License Agreement》，
+条款随仓库保存在 [`harmony/licenses/HarmonyOS-SDK`](harmony/licenses/HarmonyOS-SDK)
+（SHA-256 见同名 `.sha256`，可 `sha256sum -c` 校验）；应用仅面向兼容设备分发。
+
+HAP 不含第三方运行时库；构建 / 测试工具（DevEco Studio、hvigor、TypeScript、Vitest、
+`@ohos/hypium` / `@ohos/hamock`）只在开发机使用，不随包分发。
 
 Copyright (C) 2026-present 柯一鸣

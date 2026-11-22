@@ -298,8 +298,9 @@ macOS / Linux 用 `./一键打包.sh harmony`（参数：`--install` / `--check`
 │   ├── tests/               Vitest 单测 + 与桌面版 Python 的数值对拍（141 例，对拍需本地生成基准）
 │   ├── scripts/             对拍导出、数据表导出、HAP 构建脚本
 │   ├── docs/                移植方案与进度
-│   └── harmony/             DevEco Studio 工程（2in1 / API 26）
+│   └── harmony/             DevEco Studio 工程（2in1 / target API 26，兼容 API 24）
 ├── ARCHITECTURE.md          架构说明（开发者视角）
+├── THIRD_PARTY_NOTICES.md   第三方组件许可与全文（Qt / PySide6、openpyxl 等）
 └── LICENSE                  GNU GPL v3.0 or later
 ```
 
@@ -362,3 +363,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 SPDX：`GPL-3.0-or-later`。许可全文见本仓库 [`LICENSE`](LICENSE)；
 引用 / 衍生产品请保留本版权与许可声明。
+
+随包分发的第三方组件（PySide6 / Qt、shiboken6、openpyxl、gmssl、pycryptodomex、Python 运行时、
+PyInstaller 引导器）按各自许可授权——Qt / PySide6 按 **LGPL-3.0** 使用（可替换、可重新链接）。
+组件清单、版权行与许可全文见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)，
+安装包 / deb / rpm 中均附有该文件的副本。

@@ -35,6 +35,8 @@ Name: "desktopicon"; Description: "在桌面创建快捷方式"; GroupDescriptio
 Source: "dist\AttendanceDesktop\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; GPL 合规：随安装目录携带许可全文（不弹许可页）
 Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+; 第三方组件合规：Qt / PySide6（LGPL-3.0）等组件的声明与全文
+Source: "THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\工作考勤表"; Filename: "{app}\AttendanceDesktop.exe"

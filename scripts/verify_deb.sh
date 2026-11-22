@@ -31,6 +31,8 @@ for f in usr/bin/attendance-desktop \
          usr/share/icons/hicolor/256x256/apps/attendance-desktop.png \
          usr/lib/attendance-desktop/AttendanceDesktop \
          usr/share/doc/attendance-desktop/copyright \
+         usr/share/doc/attendance-desktop/THIRD_PARTY_NOTICES.md \
+         usr/share/doc/attendance-desktop/LICENSE.Python.txt \
          usr/share/doc/attendance-desktop/changelog.gz; do
     case "$listing" in
         *"$f"*) echo "  [OK] $f" ;;
