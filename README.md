@@ -296,7 +296,7 @@ macOS / Linux 用 `./一键打包.sh harmony`（参数：`--install` / `--check`
 │   ├── docs/                移植方案与进度
 │   └── harmony/             DevEco Studio 工程（2in1 / API 26）
 ├── ARCHITECTURE.md          架构说明（开发者视角）
-└── LICENSE                  GNU GPL v3
+└── LICENSE                  GNU GPL v3.0 or later
 ```
 
 > 鸿蒙版是同一款软件的 HarmonyOS PC 端实现，详见 [`harmony-app/README.md`](harmony-app/README.md)。
@@ -341,9 +341,20 @@ macOS / Linux 用 `./一键打包.sh harmony`（参数：`--install` / `--check`
 
 ## 许可证
 
-[GNU General Public License v3.0 or later](LICENSE)（SPDX：`GPL-3.0-or-later`）
-
 Copyright (C) 2026-present 柯一鸣
 
-本程序是自由软件：你可以再分发和 / 或修改它，但必须遵守 GPL v3 条款（详见 `LICENSE`）。
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+SPDX：`GPL-3.0-or-later`。许可全文见本仓库 [`LICENSE`](LICENSE)；
 引用 / 衍生产品请保留本版权与许可声明。

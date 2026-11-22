@@ -48,7 +48,7 @@ PKG = "attendance-desktop"          # Debian 包名：必须小写 ASCII
 APP_TITLE = "工作考勤表"
 LIB_DIR = f"/usr/lib/{PKG}"         # 程序本体安装位置（FHS：非 /opt 的本地包用 /usr/lib）
 DEFAULT_VERSION = "1.0.0"
-MAINTAINER = "工作考勤表 <193697875+baijiahei-code@users.noreply.github.com>"
+MAINTAINER = "柯一鸣 <193697875+baijiahei-code@users.noreply.github.com>"
 HOMEPAGE = "https://github.com/baijiahei-code/AttendanceDesktop"
 
 # Qt6 运行时依赖：Depends 只放"缺了必然起不来"的，可选的放 Recommends
@@ -106,16 +106,25 @@ Upstream-Name: AttendanceDesktop
 Source: {homepage}
 
 Files: *
-Copyright: 2026-present 柯一鸣
+Copyright: 2026 柯一鸣
 License: GPL-3.0-or-later
- 本程序是自由软件：你可以依据 GNU 通用公共许可证（GPL）第 3 版、
- 或（由你选择）任何更新版本的规定，重新发布和/或修改它。
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
  .
- 本程序分发时希望有用，但不提供任何担保，甚至不提供适销性或特定
- 用途适用性的默示担保。详见 GNU 通用公共许可证。
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
  .
- 许可证全文由系统提供：/usr/share/common-licenses/GPL-3
- 仓库内亦附完整副本：LICENSE
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in /usr/share/common-licenses/GPL-3.
+ .
+ 中文说明（摘译，完整条款以 GPL v3 全文为准）：本程序是自由软件，你可以依据
+ GPL 第 3 版或（由你选择）任何更新版本的规定重新发布和/或修改它；本程序不提供
+ 任何担保，包括适销性与特定用途适用性的默示担保。完整许可见上方系统路径，
+ 仓库内亦附副本：LICENSE
 """
 
 # Debian 政策 §12.7：每个包必须附变更记录（native 包用 changelog.gz）

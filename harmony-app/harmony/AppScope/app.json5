@@ -1,7 +1,7 @@
 {
   "app": {
-    "bundleName": "com.example.attendanceharmony",
-    "vendor": "example",
+    "bundleName": "com.keyiming.attendance",
+    "vendor": "柯一鸣",
     "versionCode": 1000000,
     "versionName": "1.0.0",
     "buildVersion": "1",

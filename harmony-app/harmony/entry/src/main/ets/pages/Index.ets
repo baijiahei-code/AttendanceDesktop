@@ -3238,8 +3238,16 @@ struct Index {
       Text('本地离线 · 月度考勤与工资核算工具（HarmonyOS / ArkTS）').fontSize(11).fontColor(C_SUB)
       Row({ space: 4 }) {
         Text('开源许可：').fontSize(11).fontColor(C_SUB)
-        Text('GNU General Public License v3.0').fontSize(11).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
+        Text('GNU General Public License v3.0 or later').fontSize(11).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
       }
+      Row({ space: 4 }) {
+        Text('版权所有：').fontSize(11).fontColor(C_SUB)
+        Text('Copyright (C) 2026-present 柯一鸣').fontSize(11).fontWeight(FontWeight.Bold).fontColor(C_TEXT)
+      }
+      Text('许可全文：随包的 LICENSE 文件，或 https://www.gnu.org/licenses/gpl-3.0.html')
+        .fontSize(11).fontColor(C_SUB).width('100%')
+      Text('除适用法律要求或书面约定外，本程序不提供任何担保（包括适销性与特定用途适用性的默示担保）。')
+        .fontSize(11).fontColor(C_SUB).width('100%')
       Row({ space: 4 }) {
         Text('数据加密（仅 API Key）：').fontSize(11).fontColor(C_SUB)
         Text(this.cryptoSummary())

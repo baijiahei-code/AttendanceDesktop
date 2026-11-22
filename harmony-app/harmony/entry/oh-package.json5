@@ -1,10 +1,10 @@
 {
   "name": "entry",
   "version": "1.0.0",
-  "description": "Please describe the basic information.",
+  "description": "工作考勤表 · HarmonyOS 应用入口模块",
   "main": "",
-  "author": "",
-  "license": "",
+  "author": "柯一鸣",
+  "license": "GPL-3.0-or-later",
   "dependencies": {}
 }
 

@@ -68,12 +68,20 @@ print("=" * 62)
 
 # ⚠ 用 -m 调 PyInstaller（见模块 docstring：.venv\Scripts\pyinstaller.exe 的启动器里
 #   嵌了旧路径，项目改名后必定挂）。这里先自检，缺了就给明确提示而不是一堆乱码报错。
-try:
-    import PyInstaller
-except ImportError:
-    print(f"[FATAL] 当前解释器没有 PyInstaller：{sys.executable}")
-    print("        请在项目根执行：pip install -r requirements.txt（或重建 .venv）")
+#   也要检查运行时依赖：用「系统 Python」打包会静默漏掉只装在 .venv 里的包
+#   （实测漏 gmssl → 双击报 ModuleNotFoundError）。
+_missing = []
+for _mod in ("PyInstaller", "PySide6", "openpyxl", "gmssl"):
+    try:
+        __import__(_mod)
+    except ImportError:
+        _missing.append(_mod)
+if _missing:
+    print(f"[FATAL] 当前解释器缺少依赖 {', '.join(_missing)}：{sys.executable}")
+    print("        请用项目 venv 运行：.venv\\Scripts\\python.exe scripts\\pack_windows.py")
+    print("        （或先执行 pip install -r requirements.txt）")
     sys.exit(1)
+import PyInstaller
 print(f"  [OK] {'PyInstaller':10s} -> {PyInstaller.__version__}  ({sys.executable} -m PyInstaller)")
 for label, p in [("Spec", SPEC), ("ISCC", ISCC), ("InnoScript", ISS)]:
     if not p.exists():
@@ -112,6 +120,30 @@ if not EXE.exists():
     print(f"[FATAL] EXE not produced at {EXE}")
     sys.exit(1)
 print(f"  Produced -> {EXE}  ({EXE.stat().st_size / 1024 / 1024:.2f} MB)")
+
+# GPL 合规：分发二进制时随附许可全文（安装目录 / 免安装目录 / zip 都会带上这份）
+lic = ROOT / "LICENSE"
+if lic.exists():
+    shutil.copy2(lic, EXE.parent / "LICENSE")
+    print(f"  LICENSE  -> {EXE.parent / 'LICENSE'}")
+else:
+    print("  [warn] LICENSE not found; package will not include the license text")
+
+# 冻结包内容校验：关键依赖必须真的进了 PYZ。
+# 光看 PyInstaller 退出码 / 进程存活不够 —— 用错解释器时会静默漏包，
+# 双击后只弹出「No module named 'gmssl'」，冒烟的 alive 却仍是 True。
+from PyInstaller.archive.readers import ZlibArchiveReader
+_raw = EXE.read_bytes()
+_off = _raw.find(b"PYZ\0")
+if _off < 0:
+    print(f"[FATAL] 冻结包里找不到 PYZ 段：{EXE}")
+    sys.exit(1)
+_pyz = ZlibArchiveReader(str(EXE), start_offset=_off)
+_missing_mods = [m for m in ("gmssl", "PySide6", "openpyxl", "app.gm") if m not in _pyz.toc]
+if _missing_mods:
+    print(f"[FATAL] 冻结包缺少模块：{', '.join(_missing_mods)}（检查是否用错解释器）")
+    sys.exit(1)
+print("  [OK] frozen modules: gmssl / PySide6 / openpyxl / app.gm")
 
 # —— Inno Setup ——
 print("\n[2/4] ISCC installer.iss")

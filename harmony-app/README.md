@@ -98,7 +98,7 @@ harmony/entry/build/default/outputs/default/entry-default-unsigned.hap
 
 ```powershell
 hdc install -r harmony/entry/build/default/outputs/default/entry-default-unsigned.hap
-hdc shell aa start -a EntryAbility -b com.example.attendanceharmony
+hdc shell aa start -a EntryAbility -b com.keyiming.attendance
 ```
 
 ⚠ 正式分发需要华为开发者证书（`.p12` / `.p7b` / profile）做签名，仓库里不含任何证书。
@@ -147,7 +147,7 @@ hdc shell aa start -a EntryAbility -b com.example.attendanceharmony
 `harmony-app/harmony/AppScope/app.json5`：
 
 ```json5
-"bundleName": "com.example.attendanceharmony"
+"bundleName": "com.keyiming.attendance"
 ```
 
 改成你自己的反向域名（例如 `com.yourname.attendance`）。

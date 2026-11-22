@@ -1,6 +1,8 @@
 {
   "modelVersion": "26.0.0",
-  "description": "Please describe the basic information.",
+  "description": "工作考勤表 · HarmonyOS 工程",
+  "author": "柯一鸣",
+  "license": "GPL-3.0-or-later",
   "dependencies": {
   },
   "devDependencies": {
