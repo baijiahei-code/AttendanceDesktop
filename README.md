@@ -1,4 +1,8 @@
-# 工作考勤表（Attendance Desktop）
+<h1 align="center">工作考勤表（Attendance Desktop）</h1>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/baijiahei-code/AttendanceDesktop?label=License&style=flat" alt="License"></a>
+</p>
 
 一款完全离线的 **月度考勤 + 工资核算** 工具：**Windows / Linux / HarmonyOS PC 三端同一套核算口径**
 （桌面版 Python + PySide6，鸿蒙版 ArkTS + ArkUI，源码在 [`harmony-app/`](harmony-app/README.md)）。
