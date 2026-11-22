@@ -899,7 +899,8 @@ class MainWindow(OverviewPageMixin, UnitsPageMixin, CalendarPageMixin, SalaryPag
     ABOUT_HTML = (
         "<h3>工作考勤表（Attendance Desktop）</h3>"
         "<p>本地离线 · 月度考勤与工资核算工具（Python / PySide6）</p>"
-        "<p>开源许可：<b>GNU General Public License v3.0</b></p>"
+        "<p>开源许可：<b>GNU General Public License v3.0 or later</b>（GPL-3.0-or-later）</p>"
+        "<p>版权所有：Copyright (C) 2026-present 柯一鸣</p>"
         "<p>数据加密：<b>{crypto}</b></p>"
         "<hr>"
         "<p><b>免责声明</b><br>"

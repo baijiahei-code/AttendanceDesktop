@@ -174,6 +174,8 @@ Recommends:     $recommends
 敏感配置（API 凭据）在 Windows 平台使用 DPAPI，在信创平台使用国密算法
 SM2 / SM4 / HMAC-SM3 加密（GM/T 0009 顺序的 SM2 密文 + SM4-CBC + 先加密后 MAC）。
 
+Copyright (C) 2026-present 柯一鸣
+
 %install
 rm -rf %{buildroot}
 cp -a $pkgroot/. %{buildroot}/

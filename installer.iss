@@ -5,7 +5,13 @@
 AppId={{8C2E5A7B-6D31-4E1B-9F4A-2C3D6E9A0B11}
 AppName=工作考勤表
 AppVersion=1.0.0
-AppPublisher=工作考勤表
+AppPublisher=柯一鸣
+AppCopyright=Copyright (C) 2026-present 柯一鸣
+VersionInfoCompany=柯一鸣
+VersionInfoDescription=工作考勤表 安装程序
+VersionInfoCopyright=Copyright (C) 2026-present 柯一鸣
+VersionInfoProductName=工作考勤表
+VersionInfoVersion={#SetupSetting("AppVersion")}.0
 DefaultDirName={localappdata}\Programs\工作考勤表
 DefaultGroupName=工作考勤表
 DisableProgramGroupPage=yes

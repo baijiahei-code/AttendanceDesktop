@@ -233,4 +233,7 @@ java -jar "D:\DevEco Studio\sdk\default\openharmony\toolchains\lib\app_check_too
 
 ## 许可证
 
-与仓库根目录一致：GNU GPL v3。
+GNU General Public License v3.0 or later（SPDX：`GPL-3.0-or-later`），
+全文见仓库根目录 [`LICENSE`](../LICENSE)。
+
+Copyright (C) 2026-present 柯一鸣

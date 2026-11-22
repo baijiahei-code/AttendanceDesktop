@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "description": "工作考勤表 · 鸿蒙版 —— 纯 TS 业务逻辑层（可在 Node 中单测/对拍，最终拷入 ArkTS 工程）",
+  "license": "GPL-3.0-or-later",
+  "author": "柯一鸣",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",

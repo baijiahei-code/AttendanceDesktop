@@ -341,7 +341,9 @@ macOS / Linux 用 `./一键打包.sh harmony`（参数：`--install` / `--check`
 
 ## 许可证
 
-[GNU General Public License v3.0](LICENSE)
+[GNU General Public License v3.0 or later](LICENSE)（SPDX：`GPL-3.0-or-later`）
 
-Copyright (C) 2026 工作考勤表 项目作者。本项目为自由软件：你可以再分发和 / 或修改它，
-但必须遵守 GPL v3 条款（详见 `LICENSE`）。引用 / 衍生产品请保留版权与许可声明。
+Copyright (C) 2026-present 柯一鸣
+
+本程序是自由软件：你可以再分发和 / 或修改它，但必须遵守 GPL v3 条款（详见 `LICENSE`）。
+引用 / 衍生产品请保留本版权与许可声明。

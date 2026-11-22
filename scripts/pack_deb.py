@@ -106,7 +106,7 @@ Upstream-Name: AttendanceDesktop
 Source: {homepage}
 
 Files: *
-Copyright: 2026 baijiahei-code
+Copyright: 2026-present 柯一鸣
 License: GPL-3.0-or-later
  本程序是自由软件：你可以依据 GNU 通用公共许可证（GPL）第 3 版、
  或（由你选择）任何更新版本的规定，重新发布和/或修改它。
